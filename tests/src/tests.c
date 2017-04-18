@@ -39,7 +39,8 @@ int main( int argc, char **argv )
 	RunTest( "Queue Test 1", &Test_DomainLogger_Queue_1 );
 	RunTest( "Queue Test 2", &Test_DomainLogger_Queue_2 );
 	RunTest( "Queue Test 3", &Test_DomainLogger_Queue_3 );
-
+	RunTest( "Queue Test 4", &Test_DomainLogger_Queue_4 );
+	
 	printf( "Finished Tests\n" );
 
 	if( doGetChar )

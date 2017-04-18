@@ -1,57 +1,73 @@
 #include "logger.sink.console.h"
 
-static int DomainLoggerSinkConsoleInit( DomainLoggerSinkBase *sink )
+
+static void DomainLoggerConsoleSinkThreadInit( DomainLogSinkInterface *pSink )
 {
-	DomainLoggerSinkConsole *theSink;
+	DLOG_UNUSED( pSink );
 
-	theSink = ( DomainLoggerSinkConsole* )sink;
-
-#if( IS_WIN32 == 1 )
-
-	if( GetConsoleWindow() == NULL )
-	{
-		if( IsDebuggerPresent() )
-		{
-			theSink->toDebugger = 1;
-		}
-	}
-
-#endif
-
-#if !( ( ( IS_WIN32 == 1 ) || ( IS_OSX == 1 ) || ( IS_BSD == 1 ) || ( IS_LINUX == 1 ) ) )
-
-	// the platform does not allow colouring 
-	theSink->isColoured = 0;
-
-#endif
-
-	/// do we display function name, line number etc etc...
-	theSink->fullOutput = 0;
-
-#if( IS_WIN32 == 1 )
-	// now the fun bit begins
-	if( theSink->toDebugger == 1 )
-	{
-		theSink->toDebuggerBuffer = LogMemoryAlloc( 1024 );
-		if( theSink->toDebuggerBuffer == NULL )
-		{
-			return 1;
-		}
-	}
-#endif
-
-	return 0;
+/*
+	DomainLogSinkConsoleInterface *pIs;
+	pIs = ( DomainLogSinkConsoleInterface* )pSink->data;
+*/
 }
 
-static int DomainLoggerSinkConsoleThreadInit( DomainLoggerSinkBase *sink )
+static void DomainLoggerConsoleSinkProcessMessage( DomainLogSinkInterface *pSink, LogMessage *pMsg )
 {
-	// We don't need to do anything.
-	DLOG_UNUSED( sink );
+	DomainLogSinkConsoleInterface *pIs;
 
-	return 0;
+	pIs = ( DomainLogSinkConsoleInterface* )pSink->data; 
+
+	if( pIs->renderCb != NULL )
+	{
+		( *( pIs->renderCb ) )( pIs, pMsg );
+	}
 }
 
-#if( IS_WIN32 == 1 )
+void DomainLoggerConsoleSinkDestroy( DomainLogSinkInterface *pTheSink )
+{
+	DomainLogSinkConsoleInterface *pTheConsoleSink;
+	
+	pTheConsoleSink = ( DomainLogSinkConsoleInterface* )pTheSink->data;
+	
+	LogMemoryFree( pTheConsoleSink );
+}
+
+DomainLogSinkInterface* DomainLoggerConsoleSinkCreate( void )
+{
+	DomainLogSinkConsoleInterface *r;
+	size_t sz;
+
+	sz = sizeof( DomainLogSinkConsoleInterface );
+	if( ( r = ( DomainLogSinkConsoleInterface* )LogMemoryAlloc( sz ) ) == NULL )
+	{
+		return NULL;
+	}
+
+	LogMemoryZero( r, sz );
+
+	r->base.data = ( void* )r;
+
+	r->useColourOutput = 0;		
+	r->base.enabled = 0;
+	
+	r->base.OnLoggingThreadInitCb = &DomainLoggerConsoleSinkThreadInit;
+	r->base.OnLoggingThreadOnProcessMessageCb = &DomainLoggerConsoleSinkProcessMessage;
+	r->base.OnLoggingThreadClosedCb = NULL;
+	r->base.OnLoggingShutdownCb = &DomainLoggerConsoleSinkDestroy;
+
+	r->renderCb = NULL;
+
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	//r->hConsole = GetStdHandle( STD_OUTPUT_HANDLE );
+#endif
+
+	return &r->base;
+}
+
+static char *DomainLoggerConsoleLoggingLevels[] = { "[Fatal]","[Error]","[System]","[Warning]","[Info]","[Debug]","[Verbose]" };
+
+
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
 static void DomainLoggerSinkConsoleWrite( HANDLE hTo, char *data, DWORD len )
 {
@@ -75,9 +91,9 @@ static void DomainLoggerSinkConsoleWrite( HANDLE hTo, char *data, DWORD len )
 	}
 }
 
+
 static void DomainLoggerSinkConsoleWriteWin32Colour( HANDLE hTo, const char *msg, WORD colour )
 {
-
 	if( colour != 0 )
 	{
 		CONSOLE_SCREEN_BUFFER_INFO consoleInfo;
@@ -93,143 +109,138 @@ static void DomainLoggerSinkConsoleWriteWin32Colour( HANDLE hTo, const char *msg
 	}
 }
 
-static void DomainLoggerSinkConsoleWriteOutMessage( DomainLoggerSinkConsole *theSink, LogMessage *pMsg )
-{
-	static char *a1[] = { "[Fatal]","[Error]","[System]","[Warning]","[Info]","[Debug]","[Verbose]" };
-	static WORD a2[] = { 206, 12, 10, 14, 7, 6, 4 };
 
+static WORD DomainLoggerConsoleLoggerLevelColours[] = { 206, 12, 10, 14, 7, 6, 4 };
+
+	
+static void DomainLoggerConsoleSinkMono( DomainLogSinkConsoleInterface *pTheSink, LogMessage *pMsg )
+{
 	HANDLE hStdOut;
-	hStdOut = GetStdHandle( STD_OUTPUT_HANDLE );
-	
-	if( theSink->isColoured )
+	if( ( hStdOut = GetStdHandle( STD_OUTPUT_HANDLE ) ) !=  INVALID_HANDLE_VALUE )
 	{
-		DomainLoggerSinkConsoleWriteWin32Colour( hStdOut, a1[ pMsg->level ], a2[ pMsg->level ] );						
+		snprintf( pTheSink->outputBuffer, DOMAINLOGGER_SINK_CONSOLE_INTERFACE_OUTPUT_BUFFER_SIZE, "%s[%s][%d] \"", DomainLoggerConsoleLoggingLevels[ pMsg->level ], pMsg->lpDomain, pMsg->threadId );
+		DomainLoggerSinkConsoleWrite( hStdOut, pTheSink->outputBuffer, 0 );
+		DomainLoggerSinkConsoleWrite( hStdOut, pMsg->msg, pMsg->msgLength );
+		DomainLoggerSinkConsoleWrite( hStdOut, "\"\n", 0 );
 	}
-	else
+}
+
+
+static void DomainLoggerConsoleSinkColour( DomainLogSinkConsoleInterface *pTheSink, LogMessage *pMsg )
+{
+	HANDLE hStdOut;
+
+	if( ( hStdOut = GetStdHandle( STD_OUTPUT_HANDLE ) ) !=  INVALID_HANDLE_VALUE )
 	{
-		DomainLoggerSinkConsoleWrite( hStdOut, a1[ pMsg->level ], 0 );
+		snprintf( pTheSink->outputBuffer, DOMAINLOGGER_SINK_CONSOLE_INTERFACE_OUTPUT_BUFFER_SIZE, "[%s][%d] \"", pMsg->lpDomain, pMsg->threadId );
+
+		DomainLoggerSinkConsoleWriteWin32Colour( hStdOut, DomainLoggerConsoleLoggingLevels[ pMsg->level ], DomainLoggerConsoleLoggerLevelColours[ pMsg->level ] );		
+		DomainLoggerSinkConsoleWrite( hStdOut, pTheSink->outputBuffer, 0 );
+		DomainLoggerSinkConsoleWrite( hStdOut, pMsg->msg, pMsg->msgLength );
+		DomainLoggerSinkConsoleWrite( hStdOut, "\"\n", 0 );
 	}
+}
 
-	char outbu[ 100 ];
 
-	wsprintfA( outbu, "[%s][%d] \"", pMsg->lpDomain, pMsg->threadId );
-	DomainLoggerSinkConsoleWrite( hStdOut, outbu, 0 );
-	DomainLoggerSinkConsoleWrite( hStdOut, pMsg->msg, pMsg->msgLength );
-	DomainLoggerSinkConsoleWrite( hStdOut, "\"\n", 0 );
+static void DomainLoggerConsoleSinkDebugger( DomainLogSinkConsoleInterface *pTheSink, LogMessage *pMsg )
+{
+	snprintf( pTheSink->outputBuffer, DOMAINLOGGER_SINK_CONSOLE_INTERFACE_OUTPUT_BUFFER_SIZE - 1, "%s[%s][%d] \"", DomainLoggerConsoleLoggingLevels[ pMsg->level ], pMsg->lpDomain, pMsg->threadId );
+	OutputDebugStringA( pTheSink->outputBuffer );
 }
 
 #else
 
-static void DomainLoggerSinkConsoleWriteOutMessage( DomainLoggerSinkConsole *theSink, LogMessage *pMsg )
+
+static void DomainLoggerConsoleSinkMono( DomainLogSinkConsoleInterface *pTheSink, LogMessage *pMsg )
 {
-	if( theSink->isColoured )
-	{
-    static const char *levelsTextColoured[] = { "\e[101m\e[93m[Fatal]\e[39m\e[49m", "\e[91m[Error]\e[39m", "\e[94m[System]\e[39m", "\e[93m[Warning]\e[39m","\e[34m[Info]\e[39m", "\e[97m[Debug]\e[39m", "\e[97m[Verbose]\e[39m" };
+	 fprintf( stdout, "%s[%s][%d] \"%s\"\n", DomainLoggerConsoleLoggingLevels[ pMsg->level ], pMsg->lpDomain, pMsg->threadId, pMsg->msg );
+}
 
-    fprintf( stdout, "%s[%s][%d] \"%s\"\n", levelsTextColoured[ pMsg->level ], pMsg->lpDomain, pMsg->threadId, pMsg->msg );
- 	}
-	else
-	{
-    static const char *levelsToText[] = { "[Fatal]", "[Error]", "[System]", "[Warning]","[Info]", "[Debug]", "[Verbose]" };
 
-    fprintf( stdout, "%s[%s][%d] \"%s\"\n", levelsToText[ pMsg->level ], pMsg->lpDomain, pMsg->threadId, pMsg->msg );
-	}
+static void DomainLoggerConsoleSinkColour( DomainLogSinkConsoleInterface *pTheSink, LogMessage *pMsg )
+{
+  static const char *levelsTextColoured[] = { "\e[101m\e[93m[Fatal]\e[39m\e[49m", "\e[91m[Error]\e[39m", "\e[94m[System]\e[39m", "\e[93m[Warning]\e[39m","\e[34m[Info]\e[39m", "\e[97m[Debug]\e[39m", "\e[97m[Verbose]\e[39m" };
+  fprintf( stdout, "%s[%s][%d] \"%s\"\n", levelsTextColoured[ pMsg->level ], pMsg->lpDomain, pMsg->threadId, pMsg->msg );
+}
+
+
+static void DomainLoggerConsoleSinkDebugger( DomainLogSinkConsoleInterface *pTheSink, LogMessage *pMsg )
+{
 }
 
 #endif
 
-static int DomainLoggerSinkConsoleProcessLogMessage( DomainLoggerSinkBase *sink, LogMessage *pMsg )
+void DomainLoggerConsoleSinkEnable( DomainLogSinkInterface *pTheSink, int consoleOutputFlags )
 {
-	DomainLoggerSinkConsole *theSink = ( DomainLoggerSinkConsole* )sink;
+	DomainLogSinkConsoleInterface *pX = ( DomainLogSinkConsoleInterface* )pTheSink->data;
 
-#if( IS_WIN32 == 1 )
-	if( theSink->toDebugger == 1 )
+	if( pX->useColourOutput == consoleOutputFlags )
 	{
-
-		wsprintfA( theSink->toDebuggerBuffer, "[%s][%s][%d] %s\n", DomainLoggingGetStringForLevel( pMsg->level ), pMsg->lpDomain, pMsg->threadId, pMsg->msg );
-		OutputDebugStringA( theSink->toDebuggerBuffer );
+		return;
 	}
-	else
-	{
-    DomainLoggerSinkConsoleWriteOutMessage( theSink, pMsg );
-	}
-#else
-  DomainLoggerSinkConsoleWriteOutMessage( theSink, pMsg );
-#endif
- 
-	return 0;
-}
 
-/** Used to create the consoles sink settings object if needed */
-DomainLoggerSinkConsole* DomainLoggerSinkConsoleSettingsCheck( DomainLoggerSinkSettings *thisIs )
-{
-	static DomainLoggerSinkConsole *s_TheConsoleSink = NULL;
-
-	if( s_TheConsoleSink == NULL )
-	{
-		// Create the console sink and populate it with default settings
-		s_TheConsoleSink = ( DomainLoggerSinkConsole* )LogMemoryAlloc( sizeof( DomainLoggerSinkConsole ) );
-		LogMemoryZero( s_TheConsoleSink, sizeof( DomainLoggerSinkConsole ) );
-
-		s_TheConsoleSink->base.onInitCb = &DomainLoggerSinkConsoleInit;
-		s_TheConsoleSink->base.onThreadInitCb = &DomainLoggerSinkConsoleThreadInit;
-		s_TheConsoleSink->base.onProcessLogMessageCb = &DomainLoggerSinkConsoleProcessLogMessage;
-
-		s_TheConsoleSink->isColoured = 0;
-
-#if( IS_WIN32 == 1 )
-		s_TheConsoleSink->toDebugger = 0;
-		s_TheConsoleSink->toDebuggerBuffer = NULL;
+	// If we have a handle already open we need to close it.
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+#if 0
+		if( pX->hConsole != NULL )
+		{
+		//	CloseHandle( pX->hConsole );
+			pX->hConsole = NULL;
+		}
 #endif 
-	
-		thisIs->theSink = ( DomainLoggerSinkBase* )s_TheConsoleSink;
-	}
-
-	return s_TheConsoleSink;
-}
-
-int DomainLoggerSinkConsoleSettingsCMDHandler( DomainLoggerSinkSettings *thisIs, DomainLoggerCommonSettings *pCommonSettings, char *option, int currentIndex, int argc, char **argv )
-{
-	DLOG_UNUSED( argc );
-	DLOG_UNUSED( argv );
-	DLOG_UNUSED( currentIndex );
-	DLOG_UNUSED( pCommonSettings );
-
-	if( strcasecmp( "console.colour", option ) == 0 )
-	{
-		DomainLoggerSinkConsoleSettingsCheck( thisIs )->isColoured = 1;
-		return 0;
-	}
-#if( IS_WIN32 == 1 )
-	else if( strcasecmp( "console.debug", option ) == 0 )
-	{
-		DomainLoggerSinkConsoleSettingsCheck( thisIs )->toDebugger = 1;
-		DomainLoggerSinkConsoleSettingsCheck( thisIs )->isColoured = 0;
-		return 0;
-	}
 #endif
-	else if( strcasecmp( "console", option ) == 0 )
+
+	pX->useColourOutput = consoleOutputFlags;
+
+	if( consoleOutputFlags == DomainLoggerConsoleOutputDisabled )
 	{
-		/* enables the console. */
-		DomainLoggerSinkConsoleSettingsCheck( thisIs );
-		return 0;
+		pTheSink->enabled = 0;
+		pX->renderCb = NULL;
 	}
-	return -1;
-}
-
-DomainLoggerSinkSettings* DomainLoggerSinkConsoleCreateSettings()
-{
-	DomainLoggerSinkSettings *pR;
-
-	pR = ( DomainLoggerSinkSettings* )LogMemoryAlloc( sizeof( DomainLoggerSinkSettings ) );
-	if( pR != NULL )
+	else
 	{
-		pR->pNext = NULL;
-		pR->theSink = NULL;
-		pR->onHandleCMDCb = &DomainLoggerSinkConsoleSettingsCMDHandler;
-	}
-	return pR;
-}
+		pTheSink->enabled = 1;
 
+		if( consoleOutputFlags == DomainLoggerConsoleOutputMono )
+		{
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	
+	#if 0
+			pX->hConsole = GetStdHandle( STD_OUTPUT_HANDLE );
+			if( pX->hConsole == NULL )
+			{
+				// Windows apps and services don't always get stdout/in
+				pTheSink->enabled = 0;
+				pX->useColourOutput = DomainLoggerConsoleOutputDisabled;
+				return;
+			}
+	#endif
+
+#endif			
+			pX->renderCb = &DomainLoggerConsoleSinkMono;
+		}
+		else if( consoleOutputFlags == DomainLoggerConsoleOutputColoured )
+		{
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+#if 0
+			pX->hConsole = GetStdHandle( STD_OUTPUT_HANDLE );
+			if( pX->hConsole == NULL )
+			{
+				// Windows apps and services don't always get stdout/in
+				pTheSink->enabled = 0;
+				pX->useColourOutput = DomainLoggerConsoleOutputDisabled;
+				return;
+			}
+			#endif
+
+#endif			
+			pX->renderCb = &DomainLoggerConsoleSinkColour;
+		}
+		else if( consoleOutputFlags == DomainLoggerConsoleOutputDebugger )
+		{
+			pX->renderCb = &DomainLoggerConsoleSinkDebugger;
+		}
+	}
+}
 
 

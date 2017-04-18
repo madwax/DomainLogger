@@ -1,26 +1,26 @@
 #include "queue.h"
 
-#define TEST_QUEUE_3_NUMBEROFPRODUCERS 4
+#define TEST_QUEUE_4_NUMBEROFPRODUCERS 25
 
 typedef struct
 {
 	int32_atomic stopProducters;
 	int32_atomic stopConsumer;
-	int32_atomic recved[ TEST_QUEUE_3_NUMBEROFPRODUCERS ];
+	int32_atomic recved[ TEST_QUEUE_4_NUMBEROFPRODUCERS ];
   uint32_t numIs;
 	
 	LogMessageQueue theQueue;
 
-} Test_DomainLogger_Queue_3_Shared;
+} Test_DomainLogger_Queue_4_Shared;
 
 typedef struct
 {
 	LogThread theThread;
 	uint32_t index;
-	Test_DomainLogger_Queue_3_Shared *pShared;
+	Test_DomainLogger_Queue_4_Shared *pShared;
 	int32_atomic sent;
 	uint32_t rateControl;
-} Test_DomainLogger_Queue_3_Sender;
+} Test_DomainLogger_Queue_4_Sender;
 
 
 static LogMessage* SenderCreateMessge( uint32_t tag, void *pSender )
@@ -41,11 +41,11 @@ static LogMessage* SenderCreateMessge( uint32_t tag, void *pSender )
 
 static void SenderThreadFunction( void *pUserData )
 {
-	Test_DomainLogger_Queue_3_Sender *pSender;
+	Test_DomainLogger_Queue_4_Sender *pSender;
 	int32_t hasSent;
 	uint32_t counter;
 
-	pSender = ( Test_DomainLogger_Queue_3_Sender* )pUserData;
+	pSender = ( Test_DomainLogger_Queue_4_Sender* )pUserData;
 	hasSent = counter = 0;
 
 	while( LogAtomicCompInt32( &pSender->pShared->stopProducters, 0 ) )
@@ -72,21 +72,21 @@ static void SenderThreadFunction( void *pUserData )
 	LogAtomicSetInt32( &pSender->sent, hasSent );
 }
 
-void Test_DomainLogger_Queue_3_ConsumerThreadFunction( void *pUserData )
+void Test_DomainLogger_Queue_4_ConsumerThreadFunction( void *pUserData )
 {
-	Test_DomainLogger_Queue_3_Shared *pShared;
+	Test_DomainLogger_Queue_4_Shared *pShared;
 	LogMessage *msg;
 	uint32_t isRunning;
-	uint32_t recved[ TEST_QUEUE_3_NUMBEROFPRODUCERS ];
+	uint32_t recved[ TEST_QUEUE_4_NUMBEROFPRODUCERS ];
 	uint32_t i;
   uint32_t qw=0;
   
-	for( i=0; i<TEST_QUEUE_3_NUMBEROFPRODUCERS; ++i )
+	for( i=0; i<TEST_QUEUE_4_NUMBEROFPRODUCERS; ++i )
 	{
 		recved[ i ] = 0;
 	}
 
-	pShared = ( Test_DomainLogger_Queue_3_Shared* )pUserData;
+	pShared = ( Test_DomainLogger_Queue_4_Shared* )pUserData;
 
 	isRunning = 1;
 
@@ -98,7 +98,7 @@ void Test_DomainLogger_Queue_3_ConsumerThreadFunction( void *pUserData )
 		{
 			uint32_t j;
 			
-			if( msg->lineNumber >= TEST_QUEUE_3_NUMBEROFPRODUCERS )
+			if( msg->lineNumber >= TEST_QUEUE_4_NUMBEROFPRODUCERS )
 			{
 				fprintf( stdout, "BANG" );
 			}
@@ -120,7 +120,7 @@ void Test_DomainLogger_Queue_3_ConsumerThreadFunction( void *pUserData )
 	}
 	uint32_t totRecv = 0;
 	
-	for( i=0; i<TEST_QUEUE_3_NUMBEROFPRODUCERS; ++i )
+	for( i=0; i<TEST_QUEUE_4_NUMBEROFPRODUCERS; ++i )
 	{
 		totRecv += recved[ i ];
 		LogAtomicSetInt32( ( pShared->recved + i ), recved[ i ] );
@@ -129,7 +129,7 @@ void Test_DomainLogger_Queue_3_ConsumerThreadFunction( void *pUserData )
   pShared->numIs = qw;
 }
 
-static int Test_DomainLogger_Queue_3_TestProcutersAllRunning( Test_DomainLogger_Queue_3_Sender *pSenders, uint32_t num )
+static int Test_DomainLogger_Queue_4_TestProcutersAllRunning( Test_DomainLogger_Queue_4_Sender *pSenders, uint32_t num )
 {
 	uint32_t i;
 
@@ -143,7 +143,7 @@ static int Test_DomainLogger_Queue_3_TestProcutersAllRunning( Test_DomainLogger_
 	return 0;
 }
 
-static int Test_DomainLogger_Queue_3_TestProcutersAllStopped( Test_DomainLogger_Queue_3_Sender *pSenders, uint32_t num )
+static int Test_DomainLogger_Queue_4_TestProcutersAllStopped( Test_DomainLogger_Queue_4_Sender *pSenders, uint32_t num )
 {
 	uint32_t i;
 
@@ -172,35 +172,35 @@ static uint32_t RandBetweenRange( uint32_t min, uint32_t max)
 	return min + ( r / buckets );
 }
 
-int Test_DomainLogger_Queue_3()
+int Test_DomainLogger_Queue_4()
 {
-	Test_DomainLogger_Queue_3_Shared theShared;
-	Test_DomainLogger_Queue_3_Sender theSenders[ TEST_QUEUE_3_NUMBEROFPRODUCERS ];
+	Test_DomainLogger_Queue_4_Shared theShared;
+	Test_DomainLogger_Queue_4_Sender theSenders[ TEST_QUEUE_4_NUMBEROFPRODUCERS ];
 	LogThread theConsumerThread;	
-	Test_DomainLogger_Queue_3_Sender *pSender;
+	Test_DomainLogger_Queue_4_Sender *pSender;
 	uint32_t i;
 	
-	LogMemoryZero( &theShared, sizeof( Test_DomainLogger_Queue_3_Shared ) );
+	LogMemoryZero( &theShared, sizeof( Test_DomainLogger_Queue_4_Shared ) );
 	
 	LogMemoryZero( &theSenders, sizeof( theSenders ) );
 	
 	LogMessageQueueCreate( &theShared.theQueue );
 
-	for( i=0; i<TEST_QUEUE_3_NUMBEROFPRODUCERS; ++i )
+	for( i=0; i<TEST_QUEUE_4_NUMBEROFPRODUCERS; ++i )
 	{
 		pSender = ( theSenders + i );
 
 		pSender->pShared = &theShared;
 
-		pSender->rateControl = RandBetweenRange( 10000, 20000 );
+		pSender->rateControl = RandBetweenRange( 10000, 40000 );
 		pSender->index = i;
 
 		LogThreadCreate( &pSender->theThread, SenderThreadFunction, pSender );
 	}
 
-	LogThreadCreate( &theConsumerThread, &Test_DomainLogger_Queue_3_ConsumerThreadFunction, ( void* )&theShared );
+	LogThreadCreate( &theConsumerThread, &Test_DomainLogger_Queue_4_ConsumerThreadFunction, ( void* )&theShared );
 
-	for( i=0; i<TEST_QUEUE_3_NUMBEROFPRODUCERS; ++i )
+	for( i=0; i<TEST_QUEUE_4_NUMBEROFPRODUCERS; ++i )
 	{
 		pSender = ( theSenders + i );
 		LogThreadStart( &pSender->theThread );
@@ -211,12 +211,12 @@ int Test_DomainLogger_Queue_3()
 	LogThreadSleepSeconds( 1 );
 
 	i = 0;
-	while( Test_DomainLogger_Queue_3_TestProcutersAllRunning( ( theSenders + 0 ), TEST_QUEUE_3_NUMBEROFPRODUCERS ) != 0 && LogThreadRunning( &theConsumerThread ) == 0 )
+	while( Test_DomainLogger_Queue_4_TestProcutersAllRunning( ( theSenders + 0 ), TEST_QUEUE_4_NUMBEROFPRODUCERS ) != 0 && LogThreadRunning( &theConsumerThread ) == 0 )
 	{
 		++i;
 		if( i == 999 )
 		{
-			for( i=0; i<TEST_QUEUE_3_NUMBEROFPRODUCERS; ++i )
+			for( i=0; i<TEST_QUEUE_4_NUMBEROFPRODUCERS; ++i )
 			{
 				LogThreadKill( &( ( theSenders + i )->theThread ) );
 			}
@@ -229,19 +229,19 @@ int Test_DomainLogger_Queue_3()
 		}
 	}
 
-	LogThreadSleepSeconds( 5 );
+	LogThreadSleepSeconds( 50 );
 
 	LogAtomicSetInt32( &theShared.stopProducters, 1 );
 
 	LogThreadSleepSeconds( 1 );
 
 	i=0;
-	while( Test_DomainLogger_Queue_3_TestProcutersAllStopped( ( theSenders + 0 ), TEST_QUEUE_3_NUMBEROFPRODUCERS ) != 0 )
+	while( Test_DomainLogger_Queue_4_TestProcutersAllStopped( ( theSenders + 0 ), TEST_QUEUE_4_NUMBEROFPRODUCERS ) != 0 )
 	{
 		++i;
 		if( i == 999 )
 		{
-			for( i=0; i<TEST_QUEUE_3_NUMBEROFPRODUCERS; ++i )
+			for( i=0; i<TEST_QUEUE_4_NUMBEROFPRODUCERS; ++i )
 			{
 				LogThreadKill( &( ( theSenders + i )->theThread ) );
 			}
@@ -273,7 +273,7 @@ int Test_DomainLogger_Queue_3()
   uint32_t t1 = 0;
   uint32_t t2 = 0;
   
-	for( i=0; i<TEST_QUEUE_3_NUMBEROFPRODUCERS; ++i )
+	for( i=0; i<TEST_QUEUE_4_NUMBEROFPRODUCERS; ++i )
 	{
     t1 += theShared.recved[ i ];
     t2 += theSenders[ i ].sent;

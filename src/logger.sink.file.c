@@ -1,397 +1,391 @@
 #include "logger.sink.file.h"
+#include "logger.client.h"
 
-#if( IS_WIN32 == 1 )
 
-#include <Shlobj.h>
-#include <Knownfolders.h>
-#include <wchar.h>
+static void DomainLoggerFileSinkThreadProcessMsg( DomainLogSinkInterface *pSink, LogMessage *pMsg );
+static void DomainLoggerFileSinkThreadInit( DomainLogSinkInterface *theSink );
+static void DomainLoggerFileSinkThreadClose( DomainLogSinkInterface *theSink );
+static void DomainLoggerFileSinkDestroy( DomainLogSinkInterface *theSink );
+
+static void DomainLogSinkFileInterfaceLogOpen( DomainLogSinkFileInterface *pTheSink );
+static void DomainLogSinkFileInterfaceLogRender( DomainLogSinkFileInterface *pTheFilkeSink, LogMessage *pTheLogMessage );
+static void DomainLogSinkFileInterfaceLogClose( DomainLogSinkFileInterface *pTheSink );
+
+
+DomainLogSinkInterface* DomainLoggerFileSinkCreate( void )
+{
+	DomainLogSinkFileInterface *r;
+	size_t sz;
+
+	sz = sizeof( DomainLogSinkFileInterface );
+
+	r = ( DomainLogSinkFileInterface* )LogMemoryAlloc( sz );
+	if( r == NULL )
+	{
+		return NULL;
+	}	
+
+	LogMemoryZero( r, sz );
+
+	r->base.enabled = 0;
+	r->base.data = r;
+
+	r->loggingPath[ 0 ] = 0;
+
+	r->base.OnLoggingShutdownCb = &DomainLoggerFileSinkDestroy;
+	r->base.OnLoggingThreadClosedCb = &DomainLoggerFileSinkThreadClose;
+	r->base.OnLoggingThreadInitCb = &DomainLoggerFileSinkThreadInit;
+	r->base.OnLoggingThreadOnProcessMessageCb = &DomainLoggerFileSinkThreadProcessMsg;
+
+#if( DL_PLATFORM_FILE_WIN32 == 1 )
+
+	r->hCurrentLogFile = INVALID_HANDLE_VALUE;
+
+#elif( DL_PLATFORM_FILE_POSIX == 1 )
+
+	r->hCurrentLogFile = -1;
 
 #endif
-
-static int DomainLoggerSinkFileGetBasePath( char *path, size_t maxPathLength, const char *applicationName );
-static int DomainLoggerSinkFileFileName( char *logFilePath, size_t filePathBufferSize, const char *basePath, const char *appName, int useUTC );
-
-static DomainLoggerSinkFile *s_TheFileSink = NULL;
-
-#if( IS_WIN32 == 1 )
-
-static int DomainLoggerSinkFileFileNameWChar( wchar_t *logFilePath, size_t filePathBufferSize, const char *basePath, const char *appName, int useUTC );
-
-
-static int DomainLoggerSinkFileGetBasePath( char *path, size_t maxPathLength, const char *applicationName )
-{
-	int r = 1;
-	wchar_t *toUsersLocalAppData;
-
-	toUsersLocalAppData = NULL;
-
-	if( SHGetKnownFolderPath( &FOLDERID_LocalAppData, 0, NULL, &toUsersLocalAppData ) == S_OK )
-	{
-		char *base = LogMemoryAlloc( DOMAINLOGGER_FILELOGGING_MAX_BASE_PATH_LENGTH ); 
-		if( base != NULL )
-		{
-			WideCharToMultiByte( CP_UTF8, 0, toUsersLocalAppData, -1, base, DOMAINLOGGER_FILELOGGING_MAX_BASE_PATH_LENGTH, NULL, NULL );
-
-			snprintf( path, ( int )maxPathLength, "%s\\%s\\logs", base, applicationName );
-
-			LogMemoryFree( base );
-
-			r = 0;
-		}
-
-		CoTaskMemFree( toUsersLocalAppData );
-	}
-
-	return r;
+	return &r->base;
 }
 
-#elif( IS_OSX == 1 )
-
-static int DomainLoggerSinkFileGetBasePath( char *path, size_t maxPathLength, const char *applicationName )
+static void DomainLoggerFileSinkThreadInit( DomainLogSinkInterface *pTheSink )
 {
-	snprintf( path, maxPathLength, "%s/Library/Application Support/%s/logs", getenv( "HOME" ), applicationName );
-	return 0;
-}
-
-#elif( IS_IOS == 1 )
-
-static int DomainLoggerSinkFileGetBasePath( char *path, size_t maxPathLength, const char *applicationName )
-{
-	#warning Is there a better way?
-	snprintf( path, maxPathLength, "%s/Library/Documents/%s/Logs", getenv( "HOME" ), applicationName );
-	return 0;
-}
-
-#elif( IS_ANDROID == 1 )
-
-static int DomainLoggerSinkFileGetBasePath( char *path, size_t maxPathLength, const char *applicationName )
-{
-#error !FIX
-	return 0;
-}
-
-#else
-
-static int DomainLoggerSinkFileGetBasePath( char *path, size_t maxPathLength, const char *applicationName )
-{
-	snprintf( path, maxPathLength, "/var/tmp/%s/logs", applicationName );
-	return 0;
-}
-
-#endif
-
-
-#if( IS_WIN32 )
-int DomainLoggerSinkFileFileNameWChar( wchar_t *logFilePath, size_t filePathBufferSize, const char *basePath, const char *appName, int useUTC )
-{
-	wchar_t basePathW[ DOMAINLOGGER_FILELOGGING_MAX_BASE_PATH_LENGTH ];
-
-	LogConvertCharToWChar( basePathW, DOMAINLOGGER_FILELOGGING_MAX_BASE_PATH_LENGTH, basePath );
-
-	filePathBufferSize = filePathBufferSize;
-
-	SYSTEMTIME theCurrentTime;
-	if( useUTC )
-	{
-		GetSystemTime( &theCurrentTime );
-	}
-	else
-	{
-		GetLocalTime( &theCurrentTime );
-	}
-
-	if( appName == NULL )
-	{
-		static wchar_t *localFormat = L"%s/%02d%02d%02d-%02d%02d%02d.log";
-		static wchar_t *utcFormat = L"%s/%02d%02d%02d-%02d%02d%02d-UTC.log";
-
-		wchar_t *usingFormat;
-
-		if( useUTC )
-		{
-			usingFormat = utcFormat;
-		}
-		else
-		{
-			usingFormat = localFormat;
-		}
-
-		wsprintfW( logFilePath, usingFormat, basePathW, theCurrentTime.wYear, theCurrentTime.wMonth, theCurrentTime.wDay, theCurrentTime.wHour, theCurrentTime.wMinute, theCurrentTime.wSecond );
-	}
-	else
-	{
-		static wchar_t *localFormat = L"%s/%s-%02d%02d%02d-%02d%02d%02d.log";
-		static wchar_t *utcFormat = L"%s/%s-%02d%02d%02d-%02d%02d%02d-UTC.log";
-		wchar_t *usingFormat;
-		wchar_t appNameW[ DOMAINLOGGER_APPLICATION_NAME_MAX_LENGTH ];
-
-		LogConvertCharToWChar( appNameW, DOMAINLOGGER_APPLICATION_NAME_MAX_LENGTH, appName );
-
-		if( useUTC )
-		{
-			usingFormat = utcFormat;
-		}
-		else
-		{
-			usingFormat = localFormat;
-		}
-
-		wsprintfW( logFilePath, usingFormat, basePathW, appNameW, theCurrentTime.wYear, theCurrentTime.wMonth, theCurrentTime.wDay, theCurrentTime.wHour, theCurrentTime.wMinute, theCurrentTime.wSecond );
-	}
-
-	return 0;
-}
-#endif
-
-int DomainLoggerSinkFileFileName( char *logFilePath, size_t filePathBufferSize, const char *basePath, const char *appName, int useUTC )
-{
-#if( NO_CLIB_WIN32 == 1 )
-
-	DLOG_UNUSED( logFilePath );
-	DLOG_UNUSED( filePathBufferSize );
-	DLOG_UNUSED( basePath );
-	DLOG_UNUSED( appName );
-	DLOG_UNUSED( useUTC );
-
-	return 1;
-
-#else
-
-	time_t nowIs;
-	struct tm theCurrentTime;
-
-	time( &nowIs );
-
-	if( useUTC )
-	{
-		gmtime_r( &nowIs, &theCurrentTime );
-	}
-	else
-	{
-		localtime_r( &nowIs, &theCurrentTime );
-	}
-
-	if( appName == NULL )
-	{
-		static char *localFormat = "%s/%02d%02d%02d-%02d%02d%02d.log";
-		static char *utcFormat = "%s/%02d%02d%02d-%02d%02d%02d-UTC.log";
-		char *usingFormat;
-
-		if( useUTC )
-		{
-			usingFormat = utcFormat;
-		}
-		else
-		{
-			usingFormat = localFormat;
-		}
-
-		snprintf( logFilePath, filePathBufferSize, usingFormat, basePath, theCurrentTime.tm_year, theCurrentTime.tm_mon, theCurrentTime.tm_mday, theCurrentTime.tm_hour, theCurrentTime.tm_min, theCurrentTime.tm_sec );
-	}
-	else
-	{
-		static char *localFormat = "%s/%s-%02d%02d%02d-%02d%02d%02d.log";
-		static char *utcFormat = "%s/%s-%02d%02d%02d-%02d%02d%02d-UTC.log";
-		char *usingFormat;
-
-		if( useUTC )
-		{
-			usingFormat = utcFormat;
-		}
-		else
-		{
-			usingFormat = localFormat;
-		}
-
-		snprintf( logFilePath, filePathBufferSize, usingFormat, basePath, appName, theCurrentTime.tm_year, theCurrentTime.tm_mon, theCurrentTime.tm_mday, theCurrentTime.tm_hour, theCurrentTime.tm_min, theCurrentTime.tm_sec );
-	}
-
-	return 0;
-#endif
-}
-
-static int DomainLoggerSinkFileOpenLogFile( DomainLoggerSinkFile *theSink )
-{
-// Now create the log file
-#if( IS_WIN32 == 1 )
-	wchar_t logFilePath[ DOMAINLOGGER_FILELOGGING_MAX_PATH_LENGTH ];
-
-	if( DomainLoggerSinkFileFileNameWChar( logFilePath, DOMAINLOGGER_FILELOGGING_MAX_PATH_LENGTH, theSink->fileLoggingBasePath, theSink->base.pCommonSettings->applicationName, 1 ) == 1 )
-	{
-		reportFatal( "Failed to create filepath for log file" );
-		return 1;
-	}
-
-	if( LogFileOpenForWritingFilePathWChar( &theSink->theLogFile, logFilePath ) == 1 )
-	{
-		reportFatal( "Failed to open the log file" );
-		return 1;
-	}
-
-#else
-	char logFilePath[ DOMAINLOGGER_FILELOGGING_MAX_PATH_LENGTH ];
-
-	if( DomainLoggerSinkFileFileName( logFilePath, DOMAINLOGGER_FILELOGGING_MAX_PATH_LENGTH, theSink->fileLoggingBasePath, theSink->base.pCommonSettings->applicationName, 1 ) == 1 )
-	{
-		reportFatal( "Failed to create filepath for log file" );
-		return 1;
-	}
-
-	if( LogFileOpenForWritingFilePath( &theSink->theLogFile, logFilePath ) == 1 )
-	{
-		reportFatal( "Failed to open the log file" );
-		return 1;
-	}
-
-#endif
-	return 0;
-}
-
-static int DomainLoggerSinkFileInit( DomainLoggerSinkBase *sink )
-{
-	DomainLoggerSinkFile *theSink;
+	DomainLogSinkFileInterface *pTheFileSink;
 	
-	theSink = ( DomainLoggerSinkFile* )sink;
+	pTheFileSink = ( DomainLogSinkFileInterface* )pTheSink;
 
-	// Did the user set the log path?
-	if( theSink->fileLoggingBasePath[ 0 ]  == 0 )
+	if( pTheFileSink->base.enabled == 1 )
 	{
-		// need to get the default logging path now.
-		if( DomainLoggerSinkFileGetBasePath( theSink->fileLoggingBasePath, DOMAINLOGGER_FILELOGGING_MAX_BASE_PATH_LENGTH, theSink->base.pCommonSettings->applicationName ) )
+		// we need to open the file.
+	}
+}
+
+
+static void DomainLoggerFileSinkThreadProcessMsg( DomainLogSinkInterface *pTheSink, LogMessage *pTheMsg )
+{
+	DomainLogSinkFileInterface *pTheFileSink;
+	
+	pTheFileSink = ( DomainLogSinkFileInterface* )pTheSink;
+
+#if( DL_PLATFORM_FILE_WIN32 == 1 )
+	if( pTheFileSink->hCurrentLogFile == INVALID_HANDLE_VALUE )
+#elif( DL_PLATFORM_FILE_POSIX == 1 )
+	if( pTheFileSink->hCurrentLogFile == -1 )
+#endif
+	{
+		if( pTheFileSink->base.enabled == 1 )
 		{
-			reportFatal( "Unable to workout default logging path" ); 
+			// the log file was enabled after logging was started so we need to open the file.
+			DomainLogSinkFileInterfaceLogOpen( pTheFileSink );
+			DomainLogSinkFileInterfaceLogRender( pTheFileSink, pTheMsg );
+		}
+	}
+	else
+	{
+		if( pTheFileSink->base.enabled == 0 )
+		{
+			// someone wants the log file closed.
+			DomainLogSinkFileInterfaceLogClose( pTheFileSink );
+		}
+		else
+		{
+			DomainLogSinkFileInterfaceLogRender( pTheFileSink, pTheMsg );
+		}
+	}
+}
+
+
+static void DomainLoggerFileSinkThreadClose( DomainLogSinkInterface *pTheSink )
+{
+	DomainLogSinkFileInterface *pTheFileSink;
+	
+	pTheFileSink = ( DomainLogSinkFileInterface* )pTheSink;
+
+	DomainLogSinkFileInterfaceLogClose( pTheFileSink );
+}
+
+
+static int DomainLogSinkFileInterfaceLogWrite( DomainLogSinkFileInterface *pTheFilkeSink, char *data, uint32_t numberOfBytes )
+{
+#if( DL_PLATFORM_FILE_WIN32 == 1 )
+
+	DWORD bytesWritten;
+	char *d;
+
+	bytesWritten = 0;
+	d = data;
+
+	while( numberOfBytes ) 
+	{
+		if( WriteFile( pTheFilkeSink->hCurrentLogFile, d, numberOfBytes, &bytesWritten, NULL ) == 0 )
+		{
 			return 1;
 		}
-
-		// now validate the path.
-		if( LogValidateDirectory( theSink->fileLoggingBasePath ) )
+		else
 		{
-			reportFatal( "Unable to validate logging path" );
-			reportFatal( theSink->fileLoggingBasePath );
+			d += bytesWritten;
+			numberOfBytes -= bytesWritten;
+		}
+	}
+
+	FlushFileBuffers( pTheFilkeSink->hCurrentLogFile );
+
+#elif(  DL_PLATFORM_FILE_POSIX == 1 )
+
+	ssize_t bytesWritten;
+	char *d;
+
+	bytesWritten = 0;
+	d = data;
+
+	while( numberOfBytes ) 
+	{
+		if( ( bytesWritten = write( pTheFilkeSink->hCurrentLogFile, ( const void* )d, numberOfBytes ) ) == -1 )
+		{
 			return 1;
 		}
+		else
+		{
+			d += bytesWritten;
+			numberOfBytes -= bytesWritten;
+		}
 	}
 
-	if( DomainLoggerSinkFileOpenLogFile( theSink ) )
+	fsync( pTheFilkeSink->hCurrentLogFile );
+#endif	
+
+	return 0;
+}
+
+
+static void DomainLogSinkFileInterfaceLogRender( DomainLogSinkFileInterface *pTheFilkeSink, LogMessage *pTheLogMessage )
+{
+	static char *theLevels[] = { "Fatal","Error","System","Warning","Info","Debug","Verbose" };
+
+#if( DL_PLATFORM_FILE_WIN32 == 1 )
+
+	if( pTheFilkeSink->hCurrentLogFile == INVALID_HANDLE_VALUE )
 	{
-		reportFatal( "Failed to open log file" );
-		return 1;
+		return;
+	}
+#elif( DL_PLATFORM_FILE_POSIX == 1 )
+	if( pTheFilkeSink->hCurrentLogFile == -1 )
+	{
+		return;
+	}
+#endif
+	else
+	{
+		uint64_t delta;
+		uint32_t numberOf;
+		uint32_t hours, mins, secs, mils;
+
+		hours = mins = secs =  mils = 0;
+
+		delta = pTheLogMessage->when - DomainLoggerClientGet()->whenEpoc;
+
+		if( delta != 0 )
+		{
+			mils = ( uint32_t )( delta % 1000 );
+			secs = ( uint32_t )( ( delta / 1000 ) % 60 );
+			mins = ( uint32_t )( ( delta / ( 1000 * 60 ) ) % 60 );
+			hours = ( uint32_t )( delta / ( 1000 * 60 * 60 ) );
+		}
+				
+		numberOf = snprintf( pTheFilkeSink->outputBuffer, DOMAINLOGGER_SINK_FILE_INTERFACE_OUTPUT_BUFFER_SIZE, "%s¬%d:%02d:%02d:%04d¬%s¬%d¬'%s'¬\n", theLevels[ pTheLogMessage->level ], hours, mins, secs, mils, pTheLogMessage->lpDomain, pTheLogMessage->threadId, pTheLogMessage->msg );
+
+		DomainLogSinkFileInterfaceLogWrite( pTheFilkeSink, pTheFilkeSink->outputBuffer, numberOf );
+	}
+}
+
+
+static void DomainLogSinkFileInterfaceLogOpen( DomainLogSinkFileInterface *pTheSink )
+{
+	if( !pTheSink->base.enabled )
+	{
+		// not enabled
+		return;
 	}
 
-	return 0;
-}
+	if( pTheSink->loggingPath[ 0 ] == 0 )
+	{
+		// no path set.
+		return;
+	}
 
-static int DomainLoggerSinkFileThreadInit( DomainLoggerSinkBase *sink )
-{
-	DLOG_UNUSED( sink );
+#if( DL_PLATFORM_FILE_WIN32 == 1 )
 
-	return 0;
-}
+	if( pTheSink->hCurrentLogFile == INVALID_HANDLE_VALUE )
+	{
+		wchar_t bu[ 1024 ];
+		LogMemoryZero( bu, ( 1024 * sizeof( wchar_t ) ) );
 
-static int DomainLoggerSinkFileProcessLogMessage( DomainLoggerSinkBase *sink, LogMessage *pMsg )
-{
-	DomainLoggerSinkFile *theSink;
+		LogConvertCharToWChar( bu, 1024, pTheSink->loggingPath );
 
-	theSink = ( DomainLoggerSinkFile* )sink;
+		pTheSink->hCurrentLogFile = CreateFileW( bu, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+	}
+
+#elif( DL_PLATFORM_FILE_POSIX == 1 )
+
+	if( pTheSink->hCurrentLogFile == -1 )
+	{
+		pTheSink->hCurrentLogFile = open( pTheSink->loggingPath, O_CREAT|O_APPEND|O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH );
+	}
+#endif
+
+	{
+		uint32_t numberOf;
+		DomainLoggerClient *pTheClient = DomainLoggerClientGet();
+
+		LogMemoryZero( pTheSink->outputBuffer, 256 );
+
+		numberOf = snprintf( pTheSink->outputBuffer, 256, "#Application:%s\n", pTheClient->theApplicationName );
+		DomainLogSinkFileInterfaceLogWrite( pTheSink, pTheSink->outputBuffer, numberOf );
+
+		if( pTheClient->theApplicationIdentifier != NULL )
+		{
+			numberOf = snprintf( pTheSink->outputBuffer, 256, "#ApplicationIdentifier:%s", pTheClient->theApplicationName );
+			DomainLogSinkFileInterfaceLogWrite( pTheSink, pTheSink->outputBuffer, numberOf );
+		}
+
+		numberOf = snprintf( pTheSink->outputBuffer, 256, "#OpenedUTC:%04d/%02d/%02d %02d:%02d:%02d\n", pTheClient->createdOnUTC.year, pTheClient->createdOnUTC.month, pTheClient->createdOnUTC.day, pTheClient->createdOnUTC.hours, pTheClient->createdOnUTC.minutes, pTheClient->createdOnUTC.seconds );
+		DomainLogSinkFileInterfaceLogWrite( pTheSink, pTheSink->outputBuffer, numberOf );
+
+		numberOf = snprintf( pTheSink->outputBuffer, 256, "#OpenedLocal:%04d/%02d/%02d %02d:%02d:%02d\n", pTheClient->createdOnLocal.year, pTheClient->createdOnLocal.month, pTheClient->createdOnLocal.day, pTheClient->createdOnLocal.hours, pTheClient->createdOnLocal.minutes, pTheClient->createdOnLocal.seconds );
+		DomainLogSinkFileInterfaceLogWrite( pTheSink, pTheSink->outputBuffer, numberOf );
 	
-	if( LogFileIsOpen( &theSink->theLogFile ) == 0 )
+		/// TODO RHC need toget the process id.
+		numberOf = snprintf( pTheSink->outputBuffer, 256, "#ProcessId %d\n", 0 );
+		DomainLogSinkFileInterfaceLogWrite( pTheSink, pTheSink->outputBuffer, numberOf );
+	}
+}
+
+
+static void DomainLogSinkFileInterfaceLogClose( DomainLogSinkFileInterface *pTheSink )
+{
+#if( DL_PLATFORM_FILE_WIN32 == 1 )
+
+	if( pTheSink->hCurrentLogFile != INVALID_HANDLE_VALUE )
 	{
-		// log file is not open!
+		CloseHandle( pTheSink->hCurrentLogFile );
+		pTheSink->hCurrentLogFile = INVALID_HANDLE_VALUE;
+	}
+
+#elif( DL_PLATFORM_FILE_POSIX == 1 )
+
+	if( pTheSink->hCurrentLogFile != -1 )
+	{
+		close( pTheSink->hCurrentLogFile );
+		pTheSink->hCurrentLogFile = -1;
+	}
+
+#endif
+}
+
+
+static void DomainLoggerFileSinkBuildAndSetFilePath( DomainLogSinkFileInterface *pTheSink, const char *path, const char *prefix )
+{
+	DomainLoggerClient *pTheClient = DomainLoggerClientGet();
+
+	snprintf( pTheSink->loggingPath, DOMAINLOGGER_SINK_FILE_INTERFACE_MAX_BASE_PATH_LENGTH, "%s/%s-%04d%02d%02d-%02d%02d%02d.log", path, prefix, pTheClient->createdOnUTC.year, pTheClient->createdOnUTC.month, pTheClient->createdOnUTC.day, pTheClient->createdOnUTC.hours, pTheClient->createdOnUTC.minutes, pTheClient->createdOnUTC.seconds );
+
+#if( DL_PLATFORM_FILE_WIN32 == 1 )
+	
+	wchar_t tmp[ DOMAINLOGGER_SINK_FILE_INTERFACE_MAX_BASE_PATH_LENGTH ];
+	LogMemoryZero( tmp, DOMAINLOGGER_SINK_FILE_INTERFACE_MAX_BASE_PATH_LENGTH );
+
+	LogConvertCharToWChar( tmp, DOMAINLOGGER_SINK_FILE_INTERFACE_MAX_BASE_PATH_LENGTH, path );
+
+	LogCreateDirectoryTreeWChar( tmp );
+
+#elif( DL_PLATFORM_FILE_POSIX == 1 )
+
+	LogCreateDirectoryTreeChar( path );
+
+#else
+#error missing
+#endif
+}
+
+
+void DomainLoggerFileSinkSetPathW( DomainLogSinkInterface *pTheSink, const wchar_t *dirPath, const char *prefix )
+{
+#if( DL_PLATFORM_FILE_WIN32 == 1 )
+	DomainLogSinkFileInterface *pTheFileSink;
+	pTheFileSink = ( DomainLogSinkFileInterface* )pTheSink->data;
+
+	if( dirPath == NULL )
+	{
+		pTheFileSink->loggingPath[ 0 ] = 0;
+		DomainLogSinkFileInterfaceLogClose( pTheFileSink );
+	}
+	else
+	{
+		char holdingBuffer[ DOMAINLOGGER_SINK_FILE_INTERFACE_MAX_BASE_PATH_LENGTH ];
+		LogMemoryZero( holdingBuffer, DOMAINLOGGER_SINK_FILE_INTERFACE_MAX_BASE_PATH_LENGTH );
+
+		LogConvertWCharToChar( holdingBuffer, DOMAINLOGGER_SINK_FILE_INTERFACE_MAX_BASE_PATH_LENGTH, dirPath );
+	
+		DomainLoggerFileSinkBuildAndSetFilePath( pTheFileSink, holdingBuffer, prefix );
+	}
+	
+#else
+#endif	
+}
+
+
+void DomainLoggerFileSinkSetPath( DomainLogSinkInterface *pTheSink, const char *dirPath, const char *prefix )
+{
+	DomainLogSinkFileInterface *pTheFileSink;
+	pTheFileSink = ( DomainLogSinkFileInterface* )pTheSink->data;
+
+	if( dirPath == NULL )
+	{
+		pTheFileSink->loggingPath[ 0 ] = 0;
+		DomainLogSinkFileInterfaceLogClose( pTheFileSink );
+	}
+	else
+	{
+		DomainLoggerFileSinkBuildAndSetFilePath( pTheFileSink, dirPath, prefix );
+	}
+}
+
+
+int DomainLoggerFileSinkPathSet( DomainLogSinkInterface *pTheSink )
+{
+	DomainLogSinkFileInterface *pTheFileSink;
+	pTheFileSink = ( DomainLogSinkFileInterface* )pTheSink->data;
+
+	if( pTheFileSink->loggingPath[ 0 ] != 0 )
+	{
 		return 1;
 	}
 
-///	snprintf( theSink->theOutputBuffer, DOMAINLOGGER_FILELOGGING_MAX_OUTPUTBUFFER_LENGTH, "%s,%s,%d,%d,\"%s\"\n", DomainLoggingGetStringForLevel( pMsg->level ), pMsg->lpDomain, pMsg->count, pMsg->msg );
-
-	snprintf( theSink->theOutputBuffer, DOMAINLOGGER_FILELOGGING_MAX_OUTPUTBUFFER_LENGTH, "%s,%s,%lld,\'%s\'\n", DomainLoggingGetStringForLevel( pMsg->level ), pMsg->lpDomain, pMsg->count, pMsg->msg );
-
-	LogFileWrite( &theSink->theLogFile, theSink->theOutputBuffer, strlen( theSink->theOutputBuffer ) );
-
-	return 0;
+	return 0;	
 }
 
-static DomainLoggerSinkFile* DomainLoggerSinkFileCreate( DomainLoggerSinkSettings *thisIs )
+
+void DomainLoggerFileSinkEnable( DomainLogSinkInterface *pTheSink, int toEnable )
 {
-	DomainLoggerSinkFile *r;
+	DomainLogSinkFileInterface *pTheFileSink;
 
-	r = ( DomainLoggerSinkFile* )LogMemoryAlloc( sizeof( DomainLoggerSinkFile ) );
-	LogMemoryZero( r, sizeof( DomainLoggerSinkFile ) );
+	if( pTheSink->enabled == toEnable )
+	{
+		return;
+	}
 
-	r->base.onInitCb = &DomainLoggerSinkFileInit;
-	r->base.onThreadInitCb = &DomainLoggerSinkFileThreadInit;
-	r->base.onProcessLogMessageCb = &DomainLoggerSinkFileProcessLogMessage;
+	pTheFileSink = ( DomainLogSinkFileInterface* )pTheSink->data;
 
-	thisIs->theSink = ( DomainLoggerSinkBase* )r;
-
-	return r;
+	pTheSink->enabled = toEnable;
 }
 
-/** Used to create the file sink settings object if needed */
-DomainLoggerSinkFile* DomainLoggerSinkFileSettingsCheck( DomainLoggerSinkSettings *thisIs )
+
+static void DomainLoggerFileSinkDestroy( DomainLogSinkInterface *theSink )
 {
-	if( s_TheFileSink == NULL )
-	{
-		// Create the console sink and populate it with default settings
-		s_TheFileSink = DomainLoggerSinkFileCreate( thisIs );
-	}
-	return s_TheFileSink;
 }
 
-int DomainLoggerSinkFileSettingsCMDHandler( DomainLoggerSinkSettings *thisIs, DomainLoggerCommonSettings *pCommonSettings, char *option, int currentIndex, int argc, char **argv )
-{
-	DLOG_UNUSED( pCommonSettings );
 
-	if( strcasecmp( "file.path", option ) == 0 )
-	{
-		DomainLoggerSinkFile *pSink;
 
-		/* depending on the app type open "log" window, if supported */
-		pSink = DomainLoggerSinkFileSettingsCheck( thisIs );
 
-		++currentIndex;
-		if( currentIndex >= argc )
-		{
-			reportFatal( "A directroy was not passed after --log.file.path" );
-			return -1;
-		}
 
-		option = argv[ currentIndex ];
-
-		strncpy( s_TheFileSink->fileLoggingBasePath, option, DOMAINLOGGER_FILELOGGING_MAX_BASE_PATH_LENGTH );
-
-		return 1;
-	}
-	else if( strcasecmp( "file.disabled", option ) == 0 )
-	{
-		// user wants to disable the file logging sink
-		if( s_TheFileSink != NULL )
-		{
-			thisIs->theSink = NULL;
-			LogMemoryFree( s_TheFileSink );
-			s_TheFileSink = NULL;
-		}
-		return 0;
-	}
-	else if( strcasecmp( "file", option ) == 0 )
-	{
-		/* enable the file sink if not already */
-		DomainLoggerSinkFileSettingsCheck( thisIs );
-		return 0;
-	}
-	return -2;
-}
-
-DomainLoggerSinkSettings* DomainLoggerSinkFileCreateSettings()
-{
-	DomainLoggerSinkSettings *pR;
-
-	pR = ( DomainLoggerSinkSettings* )LogMemoryAlloc( sizeof( DomainLoggerSinkSettings ) );
-	if( pR != NULL )
-	{
-		pR->pNext = NULL;
-		pR->theSink = NULL;
-		pR->onHandleCMDCb = &DomainLoggerSinkFileSettingsCMDHandler;
-
-		s_TheFileSink = DomainLoggerSinkFileSettingsCheck( pR );
-	}
-	return pR;
-}

@@ -3,25 +3,32 @@
 
 #include "logger.common.h"
 
-/** The console sink object 
-*/
-typedef struct
+/** The new Interface */
+#define DOMAINLOGGER_SINK_CONSOLE_INTERFACE_OUTPUT_BUFFER_SIZE  1024
+
+typedef struct _DomainLogSinkConsoleInterface
 {
-	DomainLoggerSinkBase base;
-	/** 1 if output is to be coloured */
-	int isColoured;
-	
-	/** If console data should be send to the debugger e.g. OutputDebugString */
-#if( IS_WIN32 == 1 )
-	int toDebugger;
-	char *toDebuggerBuffer;
+	DomainLogSinkInterface base;
+	char outputBuffer[ DOMAINLOGGER_SINK_CONSOLE_INTERFACE_OUTPUT_BUFFER_SIZE ];
+
+	uint32_t useColourOutput;
+
+	void (*renderCb)( struct _DomainLogSinkConsoleInterface *pSink, LogMessage *pMsg );
+
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+ //	HANDLE hConsole;
 #endif
-	/** Report function name, file etc etc etc... */
-	int fullOutput;
 
-} DomainLoggerSinkConsole;
+} DomainLogSinkConsoleInterface;
 
-extern DomainLoggerSinkSettings* DomainLoggerSinkConsoleCreateSettings();
+
+/** For the stdout console sink */
+DomainLogSinkInterface* DomainLoggerConsoleSinkCreate( void );
+
+void DomainLoggerConsoleSinkEnable( DomainLogSinkInterface *pTheSink, int consoleOutputFlags );
+
+/* Use to destroy the console */
+void DomainLoggerConsoleSinkDestroy( DomainLogSinkInterface *pTheSink );
 
 
 #endif /*  __DOMAIN_LOGGER_SINK_CONSOLE_H__ */ 

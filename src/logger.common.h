@@ -4,10 +4,6 @@
 /* Change this if you want to build every thing using std c lib on windows */
 #define NO_CLIB_WIN32 0
 
-#ifndef DOMAINLOGGER_MESSAGETEXTSIZE 
-	#define DOMAINLOGGER_MESSAGETEXTSIZE 256
-#endif 
-
 #ifndef DOMAINLOGGER_BLOCKSIZE 
 	#define DOMAINLOGGER_BLOCKSIZE 100
 #endif 
@@ -21,62 +17,42 @@
 #endif 
 
 #ifndef DOMAINLOGGER_DOMAINS_MAXNUMBER
-	#define DOMAINLOGGER_DOMAINS_MAXNUMBER 40
+	#define DOMAINLOGGER_DOMAINS_MAXNUMBER 60
 #endif
 
 #ifndef DOMAINLOGGER_APPLICATION_NAME_MAX_LENGTH
 	#define DOMAINLOGGER_APPLICATION_NAME_MAX_LENGTH 40
 #endif
 
-
-#if defined( _WIN32 )
-	#define IS_WIN32 1
-	#define IS_UNIX 0
+#if ( DL_PLATFORM_IS_WIN32 == 1 )
 
 	#define WIN32_LEAN_AND_MEAN
 	#include <Windows.h>
 	#include <wchar.h>
 
-#else
-	#define IS_UNIX 1
-	#define IS_WIN32 0
-	
-	#include <pthread.h>
+#elif( DL_PLATFORM_IS_UNIX == 1 )
 
+	#include <pthread.h>
 	#include <unistd.h>
 
-	#if defined( __APPLE__ )
-		#include "TargetConditionals.h"
-		#define IS_APPLE 1
-		#define PLATFORM_BSD 1
-		#if TARGET_OS_IPHONE 
-			#define IS_IOS 1
-		#else
-			#define IS_OSX 1
-		#endif
+	#if ( DL_PLATFORM_IS_DARWIN == 1 )
+	#include "TargetConditionals.h"
 	#endif
+	
+	#define DL_PLATFORM_IS_SPINLOCKS_MUTEXS 1
 
-	/** Untill someone compiles this on not-so common Unix platforms we will have Linux or BSD based systems */
-	#if defined( __BSD__ ) || defined( __BSD ) || defined( __FreeBSD__ ) || defined( __NetBSD__ ) || defined( __OpenBSD__ )
-		#define PLATFORM_BSD 1
-	#endif
+#else
 
-	#if defined( linux ) || defined( _linux ) || defined( __linux__ ) || defined( __ANDROID__ )
-		#define PLATFORM_LINUX 1
-	#endif
-
-	#if defined( __ANDROID__ ) 
-		#define IS_ANDROID 1
-	#endif
+	#error we have unknown platform.
 
 #endif
 
 /** Your normal set of micro to stop things going on about things */
 #define DLOG_UNUSED( x ) ( void )( x )
 
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
-	#if( NO_CLIB_WIN32 == 0 )
+	#if( DL_PLATFORM_NO_CLIB == 0 )
 
 		#include <stdint.h>
 		#include <stdio.h>
@@ -152,14 +128,14 @@
 	#include <sys/types.h> 
 	#include <sys/stat.h> 
 
+	// TODO FreeBSD see atomic.h atomic_cmpset_char
 
-	#if( __APPLE__ )
-
+	#if( DL_PLATFORM_IS_DARWIN == 1 )
 		#include <mach/mach.h>
 		#include <mach/mach_time.h>
 		#include <mach/clock.h>	
 		#include <CoreServices/CoreServices.h>
-    #include <libkern/OSAtomic.h>
+		#include <libkern/OSAtomic.h>
 
 	#endif
 
@@ -171,18 +147,25 @@
 	#define LogThreadYeild sched_yield
 	#define LogThreadSleepSeconds sleep
 
-#if( __APPLE__ )
+
+  typedef volatile long int32_atomic;
+
+#if( DL_PLATFORM_IS_SPINLOCKS_MUTEXS == 1 )
+  typedef pthread_mutex_t LogSpinLock;
+#else
+  /** The spin lock type */
+  typedef int32_atomic LogSpinLock;
+#endif
+
+#if( DL_PLATFORM_IS_DARWIN == 1 )
 
   #define LogAtomicIncInt32( _t ) OSAtomicIncrement32Barrier( _t )
   #define LogAtomicDecInt32( _t ) OSAtomicDecrement32Barrier( _t )
-  #define LogAtomicSetInt32( _t, _v ) OSAtomicCompareAndSwap32Barrier( *_t, _v, _t )
+  #define LogAtomicSetInt32( _t, _v ) OSAtomicCompareAndSwap32Barrier( ( volatile int32_t* )*_t, _v, ( volatile int32_t* )_t )
 
   #define LogAtomicCompInt32( _target, _with ) ( __sync_fetch_and_add( _target, 0 ) == _with )
 
   #define LogMemoryFullBarrier OSMemoryBarrier
-
-  typedef int32_t int32_atomic;
-  typedef pthread_mutex_t LogSpinLock;
 
 #else
 
@@ -194,13 +177,6 @@
 
   #define LogMemoryFullBarrier __sync_synchronize
 
-  typedef volatile long int32_atomic;
-
-#error butt
-
-  /** The spin lock type */
-  typedef int32_atomic LogSpinLock;
-
 #endif
 
   #define MAX_PATH 260
@@ -208,6 +184,8 @@
 	typedef pid_t ThreadId;
 
 #endif
+
+#include "domainlogger/domainlogger.h"
 
 /** Call this to report something very very very bad happened in the logging system 
 */
@@ -220,8 +198,6 @@ extern void *LogMemoryAlloc( size_t sizeInBytes );
 extern void *LogMemoryCopy( void *to, void *from, size_t size );
 extern void LogMemoryFree( void *pData );
 extern void LogMemoryZero( void *pData, size_t numberOfBytesToWipe );
-
-#include "domainlogger/domainlogger.h"
 
 /** Used to test for a directory and if needs be create it.
 * This does a mkdir -p type thing
@@ -245,45 +221,6 @@ extern int LogSpinLockTryCapture( LogSpinLock *lock );
 extern void LogSpinLockCapture( LogSpinLock *lock );
 extern void LogSpinLockRelease( LogSpinLock *lock );
 extern void LogSpinLockDestroy( LogSpinLock *lock );
-
-/** The Read/Write lock type */
-typedef struct 
-{
-	LogSpinLock lock;
-	int32_atomic readCounter;
-} LogReadWriteLock;
-
-extern void LogReadWriteLockCreate( LogReadWriteLock *rwLock );
-extern void LogReadWriteLockReadCapture( LogReadWriteLock *rwLock );
-extern void LogReadWriteLockReadRelease( LogReadWriteLock *rwLock );
-/** Takes a read lock and promotes it to a write lock */
-extern void LogReadWriteLockReadToWritePromote( LogReadWriteLock *rwLock );
-extern void LogReadWriteLockWriteCapture( LogReadWriteLock *rwLock );
-extern void LogReadWriteLockWriteRelease( LogReadWriteLock *rwLock );
-extern void LogReadWriteLockDestroy( LogReadWriteLock *rwLock );
-
-typedef struct _LogMessage
-{
-	char msg[ DOMAINLOGGER_MESSAGETEXTSIZE ];
-	/* The next item in the queue */
-	volatile struct _LogMessage *next;
-	/* Points to the domain name */
-	char *lpDomain;
-	/** Points to the file name */
-	char *fileName;
-	/** Points to the function name */
-	char *functionName;
-	/** The count given to the msg when popped from the free queue */
-	uint64_t count;
-	/** The source file line number were the message is from */
-	uint32_t lineNumber;
-	/* the level */
-	DomainLoggingLevels level;
-	/** The threadId where the message came from */
-	ThreadId threadId;
-	/** The length of the formated message */	
-	uint16_t msgLength;
-} LogMessage;
 
 /** The struct that defines a block of log messages 
 * Note for future stuff.
@@ -312,19 +249,22 @@ typedef struct _LogMessageBlock
 */
 typedef struct 
 {
-#if( __APPLE__ )
-  LogSpinLock lock;
-#endif
-  
+	/// Protection.
+	LogSpinLock protection;
+
 	int32_atomic numberIn;
-	volatile LogMessage *head;
-	volatile LogMessage *tail;
+
+	LogMessage *head;
+	LogMessage *tail;
 } LogMessageQueue;
 
 extern int LogMessageQueueCreate( LogMessageQueue *queue );
-extern LogMessage *LogMessageQueuePop( volatile LogMessageQueue *queue );
-extern void LogMessageQueuePush( volatile LogMessageQueue *queue, volatile LogMessage *item );
+extern LogMessage *LogMessageQueuePop( LogMessageQueue *queue );
+extern LogMessage *LogMessageQueuePopChain( LogMessageQueue *queue, uint32_t maxNumberOf, uint32_t *numberReturned, LogMessage **pEnd );
+
+extern void LogMessageQueuePush( LogMessageQueue *queue, LogMessage *item );
 extern void LogMessageQueuePushChain( LogMessageQueue *queue, LogMessage *chainHead, LogMessage *chainTail, uint32_t numberInChain ); 
+extern int LogMessageQueueDestroy( LogMessageQueue *theQueue );
 
 /** Used to get free log message to be used */
 extern LogMessage* DomainLoggerClientGetFreeMessage();
@@ -339,6 +279,11 @@ extern void DomainLoggerClientReturnFreeMessage( LogMessage *msg );
 * \return Pointer to a LogMessageBlock on the heap which you now own or NULL if there was a problem.
 */
 extern LogMessageBlock* LogMessageCreateBlock();
+/** Use to delete a block
+* \param theBlock The block to delete.
+* \return Pointer to the next block or NULL
+*/
+extern LogMessageBlock *LogMessageDestroyBlock( LogMessageBlock *theBlock );
 
 typedef struct 
 {
@@ -347,61 +292,11 @@ typedef struct
 	DomainLoggingLevels level;
 } DomainLoggerClientDomainInfo;
 
-typedef struct _DomainLoggerCommonSettings
+typedef struct
 {
-	char applicationName[ DOMAINLOGGER_APPLICATION_NAME_MAX_LENGTH ];
-
-	/** The default logging level given to every new domain */
-	DomainLoggingLevels defaultLogLevel;
-
-	/** The number of pre-defined domains and there logging levels 
-	*/
-	DomainLoggerClientDomainInfo preDefinedDomains[ DOMAINLOGGER_PREDOMAINS_MAXNUMBER ];
-	uint32_t preDefinedDomainsNumber;
-
-} DomainLoggerCommonSettings;
-
-
-/** The base object for all log message sinks in the system.
-*/
-typedef struct _DomainLoggerSinkBase
-{
-	/** A pointer and only a pointer to common settings. You don't own it */
-	DomainLoggerCommonSettings *pCommonSettings;
-
-	struct _DomainLoggerSinkBase *pNext;
-
-	/** Called when we start up the logging engine in your main thread */
-	int ( *onInitCb )( struct _DomainLoggerSinkBase *pThisIs );
-
-	/** Called in the worker thread just before we start to process the message queue holding all the log messages */
-	int ( *onThreadInitCb )( struct _DomainLoggerSinkBase *pThisIs );
-
-	/** Called when a message is to be processed by this sink */
-	int ( *onProcessLogMessageCb )( struct _DomainLoggerSinkBase *pThisIs, LogMessage *pMsg );
-
-} DomainLoggerSinkBase;
-
-
-/** Used to handle commandline arguments for the client and future server 
-* The idea is every sink type will have a sinksettings object that is added to the loggings commandline handling.  If an option for the sink is seen the handler will create the Sink object (create and asign to theSink) 
-* When the command line parseing has finished all registered sink settings object are scanned and if they have a theSink set it's used my the logger.
-*
-*/
-typedef struct _DomainLoggerSinkSettings
-{
-	/** Next in the link list of settings */
-	struct _DomainLoggerSinkSettings *pNext;
-
-	/** This holds the sink object throught the init phase of the library but loses it when everything starts running */
-	DomainLoggerSinkBase *theSink;
-
-	/** Used to handle a commandline argument.
-	* \return if there is an error return -1, the number of arguments handled or 0 if not handled.
-	*/ 
-	int ( *onHandleCMDCb )( struct _DomainLoggerSinkSettings *is, DomainLoggerCommonSettings *commonSettings, char *option, int currentIndex, int argc, char **argv ); 
-
-} DomainLoggerSinkSettings;
+	int year, month, day;
+	int hours, minutes, seconds;
+} DomainLoggerDateTime;
 
 /** Misc utility functions */
 
@@ -415,7 +310,6 @@ extern DomainLoggingLevels DomainLoggerReadLevelFromString( const char *str );
 */
 extern const char *DomainLoggingGetStringForLevel( DomainLoggingLevels level );
 
-
 /*** Thread stuff */
 
 /** Thread States */
@@ -424,13 +318,12 @@ extern const int32_t LogThreadStateStarting;
 extern const int32_t LogThreadStateRunning;
 extern const int32_t LogThreadStateStopping;
 
-
 /** The thread struct */
 typedef struct _LogThread
 {
 	int32_atomic state;
 
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 	HANDLE hThread;
 	ThreadId threadId;
 #else
@@ -473,45 +366,28 @@ int LogThreadKill( LogThread *pTheThread );
 */
 ThreadId LogThreadCurrentThreadId();
 
-
-typedef enum 
+typedef struct _LogThreadEvent
 {
-	LogFileSourceNone = 0,
-	LogFileSourceFile,
-	LogFileSourceStdOut
-} LogFileSourceModes;
-
-
-/** File stuff */
-typedef struct 
-{
-	LogFileSourceModes sourceType;
-
-#if( IS_WIN32 == 1 )
-	HANDLE hFile;
-#else
-	int hFile;
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	HANDLE hEvent;
 #endif
-} LogFile;
 
+#if( DL_PLATFORM_IS_UNIX == 1 )
 
-/** This does not create the file but creates/setup the LogFile object */
-int LogFileCreate( LogFile *pFile );
+	int32_t created;
+	pthread_mutex_t hMutex;
+	pthread_cond_t hCondition;
 
-/** Use to open a true file object */
-int LogFileOpenForWritingFilePath( LogFile *pFile, const char *filePath );
-int LogFileOpenForWritingFilePathWChar( LogFile *pFile, const wchar_t *filePath );
+#endif
 
-/** Use to open stdout so we can write to it using common code */
-int LogFileOpenStdOut( LogFile *pFile );
+} LogThreadEvent;
 
-int LogFileWrite( LogFile *pFile, const char *data, uint32_t dataSize );
+int LogThreadEventCreate( LogThreadEvent *pEvent );
 
-int LogFileFlush( LogFile *pFile );
+int LogThreadEventTrap( LogThreadEvent *pEvent );
 
-/** Unlike other functions return 1 if good or in this case file is open. It's not like the other functions in return type behavor*/
-int LogFileIsOpen( LogFile *pFile );
+int LogThreadEventWait( LogThreadEvent *pEvent, int *isTimeout );
 
-int LogFileClose( LogFile *pFile );
+void LogThreadEventDestroy( LogThreadEvent *pEvent );
 
 #endif /*  __DOMAIN_LOGGER_COMMON_H__ */

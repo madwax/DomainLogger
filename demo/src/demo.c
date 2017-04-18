@@ -16,6 +16,8 @@ static const char *theApplicationName = "Demo.DomainLogger.1";
 
 int main( int argc, char **argv )
 {
+	DomainLogSinkInterface *pConsoleSink;
+
 	int s,ss;
 	float sss;
 
@@ -26,7 +28,15 @@ int main( int argc, char **argv )
 	//DomainLoggerPreConsoleLoggingEnable( 0 );
 
 	/* Start the logger going */
-	if( DomainLoggerOpen( argc, argv, theApplicationName ) )
+	pConsoleSink = DomainLoggerConsoleSinkCreate();
+	
+	DomainLoggerConsoleSinkEnable( pConsoleSink, DomainLoggerConsoleOutputMono );
+	
+	DomainLoggerAddSink( pConsoleSink );
+	
+	DomainLoggerSetDefaultLevel( LogLevelVerbose );
+	
+	if( DomainLoggerStart( theApplicationName, NULL ) )
 	{
 		printf( "Failed to start domain logging so aborting\n" );
 		return 1;

@@ -2,7 +2,76 @@
 #include "logger.sink.file.h"
 #include "logger.sink.console.h"
 
-#if( IS_WIN32 == 1 )
+static DomainLogSinkInterface *pTheConsoleLogSink = NULL;
+static DomainLogSinkInterface *pTheFileLogSink = NULL;
+
+#if( DL_PLATFORM_IS_UNIX == 1 )
+
+static uint64_t GetTickCount64()
+{
+	uint64_t r;
+	struct timespec x;
+
+	clock_gettime( CLOCK_MONOTONIC, &x );
+
+	r = x.tv_sec * 1000;
+	if( x.tv_nsec != 0 )
+	{
+		r += ( x.tv_nsec / 1000000 ); 
+	}
+
+	return r;
+}
+
+#endif
+
+
+void DomainLoggerConsoleEnable( int consoleOutputFlags )
+{
+	if( pTheConsoleLogSink == NULL )
+	{
+		pTheConsoleLogSink = DomainLoggerConsoleSinkCreate();
+		DomainLoggerAddSink( pTheConsoleLogSink );
+	}
+
+	DomainLoggerConsoleSinkEnable( pTheConsoleLogSink, consoleOutputFlags );
+}
+
+void DomainLoggerFileSet( const char *path, const char *prefix )
+{
+	if( pTheFileLogSink == NULL )
+	{
+		pTheFileLogSink = DomainLoggerFileSinkCreate();
+		pTheFileLogSink->enabled = 1;
+
+		DomainLoggerAddSink( pTheFileLogSink );
+	}	
+
+	DomainLoggerFileSinkSetPath( pTheFileLogSink, path, prefix );
+}
+
+void DomainLoggerFileSetW( const wchar_t *path, const char *prefix )
+{
+	if( pTheFileLogSink == NULL )
+	{
+		pTheFileLogSink = DomainLoggerFileSinkCreate();
+		DomainLoggerAddSink( pTheFileLogSink );
+	}	
+
+	DomainLoggerFileSinkSetPathW( pTheFileLogSink, path, prefix );
+}
+
+int DomainLoggerFileDirSet()
+{
+	if( pTheFileLogSink == NULL )
+	{
+		return 0;
+	}
+
+	return DomainLoggerFileSinkPathSet( pTheFileLogSink );
+}
+
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
 #include <Shlobj.h>
 #include <Knownfolders.h>
@@ -24,27 +93,70 @@ void reportFatal( const char *msg )
 
 static DomainLoggerClient theLoggerClient;
 
+static int theLoggerClientInited = 0;
+
 /** Used to check the client log struct is inited */
 static void DomainLoggerClientCheck();
-
 /** Used to read what level do we have */
 static int DomainLoggerClientCreateDomain( const char *whichDomain, DomainLoggingLevels testLevel );
-static int DomainLoggerOpenReadCMD( int argc, char **argv );
 static int DomainLoggerClientPattenMatchDomainToPreDomain( DomainLoggerClientDomainInfo *lpDomain, DomainLoggerClientDomainInfo *lpPreDomain );
+static DomainLogSinkItem *DomainLoggerSinkItemCreate( DomainLogSinkInterface *theSink );
+static void DomainLoggerSinkItemDestroy(  DomainLogSinkItem *theSinkItem );
 
-/** Use to register a new sink settings object to the client object 
-* You only ever call this in the init function and any object added (not the created sinks but the settings objects) are freed.
-*/
-static void DomainLoggerClientAddSinkSettings( DomainLoggerSinkSettings *sinkSettings )
+static void DomainLoggerGetDateTime( DomainLoggerDateTime *toSet, int useUTC )
 {
-	sinkSettings->pNext = theLoggerClient.theHeadSinkSettings;
-	theLoggerClient.theHeadSinkSettings = sinkSettings;
-} 
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	
+	SYSTEMTIME theCurrentTime;
+
+	if( useUTC )
+	{
+		GetSystemTime( &theCurrentTime );
+	}
+	else
+	{
+		GetLocalTime( &theCurrentTime );
+	}
+
+	toSet->year = theCurrentTime.wYear;
+	toSet->month = theCurrentTime.wMonth;
+	toSet->day = theCurrentTime.wDay;
+
+	toSet->hours = theCurrentTime.wHour;
+	toSet->minutes = theCurrentTime.wMinute;
+	toSet->seconds = theCurrentTime.wSecond;
+
+#elif( DL_PLATFORM_IS_UNIX == 1 )
+	time_t nowIs;
+	struct tm theCurrentTime;
+
+	time( &nowIs );
+
+	if( useUTC )
+	{
+		gmtime_r( &nowIs, &theCurrentTime );
+	}
+	else
+	{
+		localtime_r( &nowIs, &theCurrentTime );
+	}
+
+	toSet->year = theCurrentTime.tm_year;
+	toSet->month = theCurrentTime.tm_mon;
+	toSet->day = theCurrentTime.tm_mday;
+
+	toSet->hours = theCurrentTime.tm_hour;
+	toSet->minutes = theCurrentTime.tm_min;
+	toSet->seconds = theCurrentTime.tm_sec;
+
+#else
+#error Failed to get time
+#endif 
+}
+
 
 static void DomainLoggerClientCheck()
 {
-	static int theLoggerClientInited = 0;
-	
 	if( theLoggerClientInited == 1 )
 	{
 		return;
@@ -54,125 +166,31 @@ static void DomainLoggerClientCheck()
 
 	LogMemoryZero( &theLoggerClient, sizeof( DomainLoggerClient ) );
 
+	theLoggerClient.defaultLoggingLevel = DomainLoggingLevelWarning;
+	theLoggerClient.domainsNumber = 0;
+	theLoggerClient.preDomainsNumber = 0;
+	theLoggerClient.numberOfSinks = 0;
+	theLoggerClient.isRunning = 0;
+	
+	// when was this created.
+	theLoggerClient.whenEpoc = GetTickCount64();
 
-	theLoggerClient.theCommonSettings.defaultLogLevel = LogLevelWarning;
-
-	theLoggerClient.theHeadSinkSettings = NULL;
-	theLoggerClient.theSinksHead = NULL;
+	DomainLoggerGetDateTime( &theLoggerClient.createdOnUTC, 1 );
+	DomainLoggerGetDateTime( &theLoggerClient.createdOnLocal, 0 );
+	
+	LogThreadEventCreate( &theLoggerClient.theThreadEvent );
 
 	LogSpinLockCreate( &theLoggerClient.theQueueProtection );
 	LogSpinLockCreate( &theLoggerClient.theFreeQueueProtection );
 
 	LogMessageQueueCreate( &theLoggerClient.theQueue );
 	LogMessageQueueCreate( &theLoggerClient.theFreeQueue );
-
-	DomainLoggerClientAddSinkSettings( DomainLoggerSinkConsoleCreateSettings() );
-	DomainLoggerClientAddSinkSettings( DomainLoggerSinkFileCreateSettings() );
 }
 
-static int DomainLoggerOpenReadCMDOptionValid( char *v )
+DomainLoggerClient* DomainLoggerClientGet()
 {
-	char *p;
-	char s[] = "--log.";
-	int i=0;
-	
-	p = ( s + 0 );
-
-	while( i<6 )
-	{
-		if( *v == 0 )
-		{
-			return 0;
-		}
-
-		if( *v != *p )
-		{
-			return 0;
-		}
-
-		++v;
-		++p;
-		++i;
-	}
-
-	return 1;
-}
-
-static int DomainLoggerOpenReadCMD( int argc, char **argv )
-{
-	char *item;
-
-	for( int i=0; i<argc; ++i )
-	{
-		item = argv[ i ];
-
-		if( DomainLoggerOpenReadCMDOptionValid( item ) )
-		{
-			item += 6;
-
-			/* first we do common settings */
-			if( strcasecmp( "level", item ) == 0 )  // --log.level %level%
-			{
-				++i;
-				if( i == argc )
-				{
-					reportFatal( "Missing value for --log.level" );
-					return 0;
-				}
-				theLoggerClient.theCommonSettings.defaultLogLevel = DomainLoggerReadLevelFromString( argv[ i ] );
-			}
-			else if( strcasecmp( "domain", item ) == 0 ) // --log.domain %domain% %level% - Allows the setting of a given domain (with whild cards)
-			{
-				++i;
-				if( i == argc )
-				{
-					reportFatal( "Missing domain name for --log.domain" );
-					return 0;
-				}
-				if( ( i + 1 ) == argc )
-				{
-					reportFatal( "Missing logging level for --log.domain" );
-					return 0;
-				}
-
-				if( theLoggerClient.theCommonSettings.preDefinedDomainsNumber < DOMAINLOGGER_PREDOMAINS_MAXNUMBER )
-				{
-					theLoggerClient.theCommonSettings.preDefinedDomains[ theLoggerClient.theCommonSettings.preDefinedDomainsNumber ].domain = argv[ i ];
-					theLoggerClient.theCommonSettings.preDefinedDomains[ theLoggerClient.theCommonSettings.preDefinedDomainsNumber ].domainLength = strlen( theLoggerClient.theCommonSettings.preDefinedDomains[ theLoggerClient.theCommonSettings.preDefinedDomainsNumber ].domain );
-					++i;
-					theLoggerClient.theCommonSettings.preDefinedDomains[ theLoggerClient.theCommonSettings.preDefinedDomainsNumber ].level = DomainLoggerReadLevelFromString( argv[ i ] );
-					++theLoggerClient.theCommonSettings.preDefinedDomainsNumber;
-				}
-			}
-			else
-			{
-				DomainLoggerSinkSettings *p;
-				int hasR;
-
-				// Now on to the registered sink settings objects.
-				p = theLoggerClient.theHeadSinkSettings;
-
-				while( p != NULL )
-				{
-					hasR = ( *p->onHandleCMDCb )( p, &theLoggerClient.theCommonSettings, item, i, argc, argv );
-					if( hasR == -1 )
-					{
-						return 0;
-					}
-					else if( hasR == -2 )
-					{
-						p = p->pNext;
-					}
-					else
-					{
-						p = NULL;
-						i += hasR;
-					}
-				}
-			}
-		}
-	}
-	return 0;
+	DomainLoggerClientCheck();
+	return &theLoggerClient;
 }
 
 static int DomainLoggerClientPattenMatchDomainToPreDomain( DomainLoggerClientDomainInfo *lpDomain, DomainLoggerClientDomainInfo *lpPreDomain )
@@ -216,55 +234,6 @@ static int DomainLoggerClientPattenMatchDomainToPreDomain( DomainLoggerClientDom
 	return 1;
 }
 
-static int DomainLoggerClientCreateDomain( const char *whichDomain, DomainLoggingLevels testLevel )
-{
-	int ret;
-	DomainLoggerClientDomainInfo *lpNewDomain;
-
-	if( theLoggerClient.domainsNumber == DOMAINLOGGER_DOMAINS_MAXNUMBER )
-	{
-		return -1;
-	}
-
-	// now the fun bit starts.
-	ret = 0;
-
-	lpNewDomain = theLoggerClient.domains + theLoggerClient.domainsNumber;
-
-	// Every domain start off with the default level 
-	lpNewDomain->domain = ( char* )whichDomain;
-	lpNewDomain->domainLength = strlen( whichDomain );
-
-	lpNewDomain->level = theLoggerClient.theCommonSettings.defaultLogLevel;
-
-	// now scan through the list of predefined domains and see if we have a match and apply.
-	// These are applied in order on the command line so you might get abit of a shock!
-	if( theLoggerClient.theCommonSettings.preDefinedDomainsNumber )
-	{
-		uint32_t i;
-		for( i=0; i<theLoggerClient.theCommonSettings.preDefinedDomainsNumber; ++i )
-		{
-			DomainLoggerClientDomainInfo *lpPre;
-			
-			lpPre = theLoggerClient.theCommonSettings.preDefinedDomains + i;
-			if( DomainLoggerClientPattenMatchDomainToPreDomain( lpNewDomain, lpPre ) == 1 )
-			{
-				// we have a match
-				lpNewDomain->level = lpPre->level;
-			}
-		}
-	}
-
-	if( testLevel <= theLoggerClient.domains[ theLoggerClient.domainsNumber ].level )
-	{
-		ret = 1;
-	}
-
-	++theLoggerClient.domainsNumber;
-
-	return ret;
-}
-
 LogMessage* DomainLoggerClientGetFreeMessage()
 {
 	LogMessage *pR;
@@ -296,6 +265,12 @@ LogMessage* DomainLoggerClientGetFreeMessage()
 
 	if( pR != NULL )
 	{
+		// time stamp it. The number of miliseconds from system startup.
+		pR->when = GetTickCount64();
+
+		// which thread
+		pR->threadId = LogThreadCurrentThreadId();
+
 		pR->next = NULL;
 	}
 
@@ -309,16 +284,28 @@ void DomainLoggerClientReturnFreeMessage( LogMessage *msg )
 	LogSpinLockRelease( &theLoggerClient.theFreeQueueProtection );
 }
 
-static void DomainLoggerPrePassArgsOn( char *item, char **extra, int numberOf )
-{
-	DomainLoggerSinkSettings *p;
 
-	p = theLoggerClient.theHeadSinkSettings;
-	while( p != NULL )
+static void DomainLoggerWorkerThreadSendToSinks( LogMessage *pTarget )
+{
+	DomainLogSinkItem *pTheSinkItem;
+	DomainLogSinkInterface *pTheSink;
+	size_t i, sz;
+	
+	sz = theLoggerClient.numberOfSinks;
+
+	// we have messages to pass onto the first sink
+	for( i=0; i<sz; ++i )
 	{
-		// TODO clean up!
-		( *p->onHandleCMDCb )( p, &theLoggerClient.theCommonSettings, item, 0, numberOf, extra );
-		p = p->pNext;
+		pTheSinkItem = theLoggerClient.theSinks[ i ];
+		pTheSink = pTheSinkItem->theSink;
+		
+		if( pTheSink->enabled == 1 )
+		{
+			if( pTheSink->OnLoggingThreadOnProcessMessageCb != NULL )
+			{
+				( *( pTheSink->OnLoggingThreadOnProcessMessageCb ) )( pTheSink, pTarget );
+			}
+		}
 	}
 }
 
@@ -327,188 +314,206 @@ static void DomainLoggerPrePassArgsOn( char *item, char **extra, int numberOf )
 */
 void DomainLoggerWorkerThreadEntryPoint( void *pUserData )
 {
+	LogMessage *firstMessages, *lastMessage;
 	DomainLoggerClient *pTheClient;
-	LogMessage *pCurrentMessage;
-	DomainLoggerSinkBase *pSink;
-	uint32_t isRunning;
-	uint32_t numberOfMessagesPerTripAround;
-	const uint32_t maxNumberOfMessagePreTripAround = 4;
+	DomainLogSinkItem *pItem;
+	uint32_t numberOfMessages;
+	uint32_t sz,i;
+	int inTimeout, shutdownNow;
 
 	pTheClient = ( DomainLoggerClient* )pUserData;
-
-	isRunning = 1;
-	numberOfMessagesPerTripAround = 0;
-
-	// need to call the thread init callbacks for what sinks we have 
-	pSink = pTheClient->theSinksHead;
 	
-	while( pSink != NULL )
+	for( i=0, sz=theLoggerClient.numberOfSinks; i<sz; ++i )
 	{
-		if( pSink->onThreadInitCb != NULL )
+		pItem = theLoggerClient.theSinks[ i ];
+		if( pItem->theSink->OnLoggingThreadInitCb != NULL )
 		{
-			(*( pSink->onThreadInitCb ) )( pSink );
+			( *( pItem->theSink->OnLoggingThreadInitCb ) )( pItem->theSink );
 		}
-		pSink = pSink->pNext;	
-	}	
+	}
+	
+	pTheClient->isRunning = 1;
 
-	while( isRunning )
+	shutdownNow = 0;
+
+	// keep running untill shutdownFlag goes true.
+	while( shutdownNow == 0 )
 	{
-		numberOfMessagesPerTripAround = 0;
+		firstMessages = NULL;
 
-		while( numberOfMessagesPerTripAround <= maxNumberOfMessagePreTripAround )
+		// Pull up to 10 messages from the incoming log queue
+		// get this over and done with so we don't hold up worker threads.
+		LogSpinLockCapture( &theLoggerClient.theQueueProtection );
+		
+		if( theLoggerClient.theQueue.numberIn )
 		{
-			LogSpinLockCapture( &pTheClient->theQueueProtection );
-			pCurrentMessage = LogMessageQueuePop( &pTheClient->theQueue );
-			LogSpinLockRelease( &pTheClient->theQueueProtection );
+			firstMessages = LogMessageQueuePopChain( &theLoggerClient.theQueue, 10, &numberOfMessages, &lastMessage );
+		}
+		LogSpinLockRelease( &theLoggerClient.theQueueProtection );
 
-			if( pCurrentMessage != NULL )
+		if( firstMessages == NULL )
+		{
+			if( theLoggerClient.shutdownFlag == 1 )
 			{
-				// we have a message to process.
-				pSink = pTheClient->theSinksHead;
-				while( pSink != NULL )
-				{
-					( *( pSink->onProcessLogMessageCb ) )( pSink, pCurrentMessage );
-					pSink = pSink->pNext;
-				}
-
-				LogSpinLockCapture( &pTheClient->theFreeQueueProtection );
-				LogMessageQueuePush( &pTheClient->theFreeQueue, pCurrentMessage );
-				LogSpinLockRelease( &pTheClient->theFreeQueueProtection );
-
-				++numberOfMessagesPerTripAround;
+				shutdownNow = 1;
 			}
 			else
 			{
-				numberOfMessagesPerTripAround = maxNumberOfMessagePreTripAround + 10;
-
-				// As the queue is now empty check to see if we are to shutdown or not?
-				if( LogAtomicCompInt32( &pTheClient->shutdownFlag, 1 ) )
-				{
-					// Today is a good day to die!
-					isRunning = 0;				
+				LogThreadEventWait( &theLoggerClient.theThreadEvent, &inTimeout );
+				if( inTimeout )
+				{		
+					// Any house keeping tasks.		
 				}
 			}
 		}
-	
-		if( numberOfMessagesPerTripAround == maxNumberOfMessagePreTripAround )
-		{
-			// well pulled the max number of messages allowed for this trip aroound the loop so there might be more, if so only yeild()
-			LogThreadYeild();			
-		}
 		else
 		{
-			// We thing the queue is empty
-			// TODO use something other than yeild()
-			LogThreadYeild();			
+			LogMessage *pTarget;
+
+			pTarget = firstMessages;
+
+			while( pTarget != NULL )
+			{
+				DomainLoggerWorkerThreadSendToSinks( pTarget );
+				pTarget = pTarget->next;
+			}
+
+			// now return the messages to the free queue
+			LogSpinLockCapture( &theLoggerClient.theFreeQueueProtection );
+			LogMessageQueuePushChain( &theLoggerClient.theFreeQueue, firstMessages, lastMessage, numberOfMessages );
+			LogSpinLockRelease( &theLoggerClient.theFreeQueueProtection );
 		}
 	}
-
-	// clean up tile for the sinks
-	pSink = pTheClient->theSinksHead;
-	while( pSink != NULL )
+	
+	// We need to flush whats in the queue.
+	if( i == sz )
 	{
-		//( *( pSink->onProcessLogMessageCb ) )( pSink, pCurrentMessage );
-		pSink = pSink->pNext;
 	}
 }
+
 
 /************************* Public API *************************/
 
-int DomainLoggerPreSetDefaultLevel( DomainLoggingLevels newDefaultLevel )
+DomainLoggingLevels DomainLoggerLevelIs( const char *whatLevel )
 {
-	DomainLoggerClientCheck();
-
-	theLoggerClient.theCommonSettings.defaultLogLevel = newDefaultLevel;
-
-	return 0;
-}
-
-int DomainLoggerPreFileLoggingDisabled()
-{
-	DomainLoggerClientCheck();
-
-	DomainLoggerPrePassArgsOn( "file.disabled", NULL, 0 );
-
-	return 0;
-}
-
-int DomainLoggerPreFileLoggingOveridePath( const char *logDirectory )
-{
-	char *x[ 1 ];
-	DomainLoggerClientCheck();
-
-	x[ 0 ] = ( char* )logDirectory;
-
-	DomainLoggerPrePassArgsOn( "file.path", x, 1 );
-
-	return 0;
-}
-
-int DomainLoggerPreConsoleLoggingEnable( int enableColourOutput )
-{
-	DomainLoggerClientCheck();
-
-	if( enableColourOutput )
-	{
-		DomainLoggerPrePassArgsOn( "console.colour", NULL, 0 );
-	}
-	else
-	{
-		DomainLoggerPrePassArgsOn( "console", NULL, 0 );
-	}
-	return 0;
-}
-
-int DomainLoggerOpen( int argc, char **argv, const char *userDefinedApplicaitonName )
-{
-	DomainLoggerSinkSettings *pSettings;
-
-	DomainLoggerClientCheck();
+	const char *strVerbose = "verbose";
+	const char *strDebug = "debug";
+	const char *strInfo = "info";
 	
-	if( userDefinedApplicaitonName == NULL )
+	if( strncasecmp( strVerbose, whatLevel, strlen( strVerbose ) ) == 0 )
 	{
-		return 1;
+		return DomainLoggingLevelVerbose;
 	}
 
-	if( DomainLoggerOpenReadCMD( argc, argv ) )
+	if( strncasecmp( strDebug, whatLevel, strlen( strDebug ) ) == 0 )
 	{
-		return 1;
+		return DomainLoggingLevelDebug;
 	}
-	
-	strncpy( theLoggerClient.theCommonSettings.applicationName, userDefinedApplicaitonName, DOMAINLOGGER_APPLICATION_NAME_MAX_LENGTH );
 
-	/* Now time to move the sinks into place and get them into a ready state. */
-	pSettings = theLoggerClient.theHeadSinkSettings;
-	while( pSettings != NULL )
+	if( strncasecmp( strInfo, whatLevel, strlen( strInfo ) ) == 0 )
 	{
-		DomainLoggerSinkSettings *was;
+		return DomainLoggingLevelInfo;
+	}
 
-		was = pSettings;
+	return DomainLoggingLevelWarning;
+}
 
-		// add the active sinks and init them.
-		if( pSettings->theSink != NULL )
+
+void DomainLoggerSetDefaultLevel( DomainLoggingLevels newDefaultLevel )
+{
+	DomainLoggerClientCheck();
+
+	theLoggerClient.defaultLoggingLevel = newDefaultLevel;
+}
+
+void DomainLoggerSetLevelToDomain( const char *domain, DomainLoggingLevels loggingLevel )
+{
+	DomainLoggerClientDomainInfo incoming, *pInfo, *pEnd;
+	uint32_t sz, found, foundPre;
+
+	DomainLoggerClientCheck();
+
+	found = 0;
+	foundPre = 0;
+
+	incoming.domain = ( char* )domain;
+	incoming.domainLength = strlen( domain );
+	incoming.level = loggingLevel;
+
+	if( ( sz = theLoggerClient.domainsNumber ) )
+	{
+		pInfo = theLoggerClient.domains + 0;
+		pEnd = theLoggerClient.domains + sz;
+
+		while( pInfo != pEnd )
 		{
-			pSettings->theSink->pCommonSettings = &theLoggerClient.theCommonSettings;
-
-			pSettings->theSink->pNext = theLoggerClient.theSinksHead;
-			theLoggerClient.theSinksHead = pSettings->theSink;
-			( *( theLoggerClient.theSinksHead->onInitCb ) )( was->theSink );
+			if( DomainLoggerClientPattenMatchDomainToPreDomain( &incoming, pInfo ) )
+			{
+				found = 1;
+				// we have a hit
+				pInfo->level = loggingLevel;
+			}
+			++pInfo;
 		}
-
-		pSettings = pSettings->pNext;
-		
-		LogMemoryFree( was );		
 	}
 
+	// go after the predefined domains
+	if( ( sz = theLoggerClient.preDomainsNumber ) )
+	{
+		pInfo = theLoggerClient.preDomains + 0;
+		pEnd = theLoggerClient.preDomains + sz;
+
+		while( pInfo != pEnd )
+		{
+			if( pInfo->domainLength == incoming.domainLength )
+			{
+				if( strcmp( pInfo->domain, incoming.domain ) == 0 )
+				{
+					foundPre = 1;
+					pInfo->level = loggingLevel;
+				}
+			}
+			++pInfo;
+		}
+	}
+	
+	if( foundPre == 0 )
+	{
+		// we need to add to pre.
+		theLoggerClient.preDomains[ sz ].domainLength = incoming.domainLength;
+		theLoggerClient.preDomains[ sz ].level = loggingLevel;
+
+		theLoggerClient.preDomains[ sz ].domain = LogMemoryAlloc( incoming.domainLength + 1 );
+		LogMemoryZero( theLoggerClient.preDomains[ sz ].domain, incoming.domainLength + 1 );
+		strncpy( theLoggerClient.preDomains[ sz ].domain, incoming.domain, incoming.domainLength );
+
+		++sz;
+		theLoggerClient.preDomainsNumber = sz;
+	}
+}
+
+int DomainLoggerStart( const char *applicationName, const char *applicationIdetifier )
+{
+	DomainLoggerClientCheck();
+	
 	/* Now it's time to start the loggers thread running! */
 	theLoggerClient.shutdownFlag = 0;
 	theLoggerClient.numberOfLogMessages = 0;
 	theLoggerClient.numberOfBlocks = 0;
 	theLoggerClient.theBlocksHead = NULL;
 
+	theLoggerClient.theApplicationName = ( char* )applicationName;
+	theLoggerClient.theApplicationIdentifier = ( char* )applicationIdetifier;
+
 	LogThreadCreate( &theLoggerClient.theWorkerThread, &DomainLoggerWorkerThreadEntryPoint, ( void* )&theLoggerClient );
 
 	LogThreadStart( &theLoggerClient.theWorkerThread );
+
+	// we wait for the logging thread to start up and get running.
+	while( theLoggerClient.isRunning == 0 )
+	{
+		LogThreadYeild();
+	}
 
 	return 0;
 }
@@ -522,16 +527,71 @@ DomainLoggingLevels DomainLoggerGetLevel( const char *whichDomain )
 			return theLoggerClient.domains[ i ].level;
 		}
 	}
-	return LogLevelWarning;
+	return DomainLoggingLevelWarning;
 }
+
+static int DomainLoggerClientCreateDomain( const char *whichDomain, DomainLoggingLevels testLevel )
+{
+	uint32_t sz;
+	int ret;
+	DomainLoggerClientDomainInfo *pNewDomain;
+
+	if( theLoggerClient.domainsNumber == DOMAINLOGGER_DOMAINS_MAXNUMBER )
+	{
+		return -1;
+	}
+
+	// now the fun bit starts.
+	ret = 0;
+
+	pNewDomain = ( theLoggerClient.domains + theLoggerClient.domainsNumber );
+
+	// Every domain start off with the default level 
+	pNewDomain->domain = ( char* )whichDomain;
+	pNewDomain->domainLength = strlen( whichDomain );
+	pNewDomain->level = theLoggerClient.defaultLoggingLevel;
+	
+	sz=theLoggerClient.preDomainsNumber;
+	
+	if( theLoggerClient.preDomainsNumber )
+	{
+		uint32_t i;
+	
+		for( i=0; i<sz; ++i )
+		{
+			if( DomainLoggerClientPattenMatchDomainToPreDomain( pNewDomain, ( theLoggerClient.preDomains + i ) ) == 1 )
+			{
+				pNewDomain->level = ( theLoggerClient.preDomains + i )->level;
+			}
+		}
+	}
+
+	if( testLevel <= pNewDomain->level )
+	{
+		ret = 1;
+	}
+
+	++theLoggerClient.domainsNumber;
+
+	return ret;
+}
+
 
 int DomainLoggerTest( const char *whichDomain, DomainLoggingLevels toTestIfUsable )
 {
+	int ret;
+
+	// We reuse the free queue protection lock as it's private and there is no way we can interlock
+	LogSpinLockCapture( &theLoggerClient.theFreeQueueProtection );
+
 	for( uint32_t i=0; i<theLoggerClient.domainsNumber; ++i )
 	{
 		if( whichDomain == theLoggerClient.domains[ i ].domain )
 		{
-			if( toTestIfUsable <= theLoggerClient.domains[ i ].level )
+			int x = theLoggerClient.domains[ i ].level;
+			LogSpinLockRelease( &theLoggerClient.theFreeQueueProtection );
+
+			if( toTestIfUsable <= x )
 			{
 				return 1;
 			}
@@ -541,7 +601,25 @@ int DomainLoggerTest( const char *whichDomain, DomainLoggingLevels toTestIfUsabl
 			}
 		}
 	}
-	return -1;
+
+	ret = -1;
+
+
+	// we need to add the new domain.
+	if( theLoggerClient.domainsNumber == DOMAINLOGGER_DOMAINS_MAXNUMBER )
+	{
+		reportFatal( "YOU HAVE MAXED OUT NUMBER OF DOMAINS ALLOWED" );
+	}	
+	else
+	{
+		DomainLoggerClientDomainInfo *pNextNewDomain;
+
+		pNextNewDomain = theLoggerClient.domains + theLoggerClient.domainsNumber;
+
+		LogSpinLockRelease( &theLoggerClient.theFreeQueueProtection );
+	}
+
+	return ret;
 }
 
 void DomainLoggerPost( const char *whichDomain, DomainLoggingLevels underLevel, const char *filename, int lineNumber, const char *functionName, const char *msg, ... )
@@ -551,7 +629,7 @@ void DomainLoggerPost( const char *whichDomain, DomainLoggingLevels underLevel, 
 	int test;
 
 	test = DomainLoggerTest( whichDomain, underLevel );
-	if( test != 1 )
+	if( test == -1 )
 	{
 		test = DomainLoggerClientCreateDomain( whichDomain, underLevel );
 	}
@@ -567,8 +645,7 @@ void DomainLoggerPost( const char *whichDomain, DomainLoggingLevels underLevel, 
 			vsnprintf( lpToSend->msg, DOMAINLOGGER_MESSAGETEXTSIZE - 1, msg, va );
 			va_end( va );
 
-			lpToSend->msgLength = strlen( lpToSend->msg );
-
+			lpToSend->msgLength = ( uint16_t )strlen( lpToSend->msg );
 
 			lpToSend->level = underLevel;
 			lpToSend->lpDomain = ( char* )whichDomain;
@@ -580,14 +657,22 @@ void DomainLoggerPost( const char *whichDomain, DomainLoggingLevels underLevel, 
 			LogSpinLockCapture( &theLoggerClient.theQueueProtection );
 			LogMessageQueuePush( &theLoggerClient.theQueue, lpToSend );
 			LogSpinLockRelease( &theLoggerClient.theQueueProtection );
+
+			LogThreadEventTrap( &theLoggerClient.theThreadEvent );
 		}
 	}
 }
 
 int DomainLoggerClose()
 {
+	uint32_t i;
+	LogMessageBlock *pMsgBlock;
+	DomainLoggerClientDomainInfo *pDomainInfo;
+
 	// flag the logging engine that's it.
 	LogAtomicSetInt32( &theLoggerClient.shutdownFlag, 1 );
+	
+	LogThreadEventTrap( &theLoggerClient.theThreadEvent );
 
 	while( LogThreadStopped( &theLoggerClient.theWorkerThread ) == 0 )
 	{
@@ -595,6 +680,106 @@ int DomainLoggerClose()
 		LogThreadYeild();
 	}
 
+	// need to clean up the domains
+	pDomainInfo = theLoggerClient.domains + 0;
+	for( i=0; i<theLoggerClient.domainsNumber; ++i, ++pDomainInfo )
+	{
+		pDomainInfo->domain = NULL;
+		pDomainInfo->domainLength = 0;
+		pDomainInfo->level = DomainLoggingLevelWarning;
+	}
+
+	// need to clean up the sink items.
+	for( i=0; i<theLoggerClient.numberOfSinks; ++i )
+	{
+		DomainLoggerSinkItemDestroy( theLoggerClient.theSinks[ i ] );
+	}
+	theLoggerClient.numberOfSinks = 0;
+
+	// now the locks.
+	LogSpinLockDestroy( &theLoggerClient.theQueueProtection );
+	LogSpinLockDestroy( &theLoggerClient.theFreeQueueProtection );
+
+	LogMessageQueueDestroy( &theLoggerClient.theQueue );
+	LogMessageQueueDestroy( &theLoggerClient.theFreeQueue );
+
+	if( ( pMsgBlock = theLoggerClient.theBlocksHead ) != NULL )
+	{
+		theLoggerClient.theBlocksHead = NULL;
+
+		while( pMsgBlock != NULL )
+		{
+			pMsgBlock = LogMessageDestroyBlock( pMsgBlock );
+		}
+	}
+
+	pTheConsoleLogSink = NULL;
+	pTheFileLogSink = NULL;
+
+	theLoggerClientInited = 0;
 	return 0;
 }
 
+static DomainLogSinkItem *DomainLoggerSinkItemCreate( DomainLogSinkInterface *theSink )
+{
+	DomainLogSinkItem *r;
+	size_t sz;
+
+	sz = sizeof( DomainLogSinkItem );
+
+	r = ( DomainLogSinkItem* )LogMemoryAlloc( sz );
+	if( r == NULL )
+	{
+		return NULL;
+	}
+
+	LogMemoryZero( r, sz );
+
+	r->theSink = theSink;
+
+	return r;
+}
+
+static void DomainLoggerSinkItemDestroy(  DomainLogSinkItem *theSinkItem )
+{
+	if( theSinkItem == NULL )
+	{
+		return;
+	}
+
+	if( theSinkItem->theSink->OnLoggingShutdownCb != NULL )
+	{
+		( *( theSinkItem->theSink->OnLoggingShutdownCb ) )( theSinkItem->theSink );
+		theSinkItem->theSink = NULL;
+	}
+
+	LogMemoryFree( theSinkItem );
+}
+
+int DomainLoggerAddSink( DomainLogSinkInterface *theSink )
+{
+	DomainLogSinkItem *newItem;
+
+	DomainLoggerClientCheck();
+	
+	if( theSink == NULL )
+	{
+		return 1;
+	}
+
+	if( theLoggerClient.numberOfSinks >= DOMAINLOGGER_MAX_NUMBER_OF_SINKS )
+	{
+		return 1;
+	}
+
+	newItem = DomainLoggerSinkItemCreate( theSink );
+	if( newItem == NULL )
+	{
+		return 1;
+	}
+
+	theLoggerClient.theSinks[ theLoggerClient.numberOfSinks ] = newItem;
+	++theLoggerClient.numberOfSinks;
+
+	return 0;
+}

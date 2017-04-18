@@ -1,3 +1,5 @@
+#include "logger.common.h"
+
 #include "queue.h"
 
 
@@ -5,7 +7,7 @@ LogMessage* Test_DomainLogger_Queue_1_CreateMessage( uint32_t c )
 {	
 	LogMessage *r;
 
-	r = ( LogMessage* )LogMemoryAlloc( sizeof( LogMessage ) );
+	r = ( LogMessage* )LogMemoryAlloc( ( size_t )sizeof( LogMessage ) );
 	//LogMemoryFree( r );
 
 	r->next = NULL;

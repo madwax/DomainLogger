@@ -38,6 +38,14 @@
 #ifndef __DOMAIN_LOGGER_H__
 #define __DOMAIN_LOGGER_H__
 
+#include <stdint.h>
+#include <time.h>
+#include <wchar.h>
+
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	#include <Windows.h>
+#endif
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -45,58 +53,157 @@ extern "C"
 
 typedef enum {
 	/* When something very bad happens */
-	LogLevelFatal = 0,
-	LogLevelError,
+	DomainLoggingLevelFatal = 0,
+	DomainLoggingLevelError,
 	/* If you want something in the log no matter what but it's not an error/warning e.g. X has started type messages*/
-	LogLevelSystem,
-	LogLevelWarning,
+	DomainLoggingLevelSystem,
+	DomainLoggingLevelWarning,
 	/* Something a power user, system interator or devel might want to know about */
-	LogLevelInfo,
+	DomainLoggingLevelInfo,
 	/* Some dev has broken something and they want to know what going on inside the mind of the computer */
-	LogLevelDebug,
+	DomainLoggingLevelDebug,
 	/* Your just being silly now, all else has failed */
-	LogLevelVerbose
+	DomainLoggingLevelVerbose
 } DomainLoggingLevels;
 
-#if 0
-/** Used before you call DomainLoggerOpen() to tell the logging engine were to put files.
-* If you don't call this and don't disable file logging your log files should be found:
+
+#ifndef DOMAINLOGGER_MESSAGETEXTSIZE 
+	#define DOMAINLOGGER_MESSAGETEXTSIZE 256
+#endif 
+
+
+/** The log event object.
+* Its here with DomainLoggerSink so if you want to write your own sink 
+*/
+typedef struct _LogMessage
+{
+	char msg[ DOMAINLOGGER_MESSAGETEXTSIZE ];
+	/* The next item in the queue */
+	struct _LogMessage *next;
+	/* Points to the domain name */
+	char *lpDomain;
+	/* When it happened We do this as number of miliseconds from startup */
+	uint64_t when;
+	/** Points to the file name */
+	char *fileName;
+	/** Points to the function name */
+	char *functionName;
+	/** The source file line number were the message is from */
+	uint32_t lineNumber;
+	/* the level */
+	DomainLoggingLevels level;
+	/** The threadId where the message came from */
+	uint32_t threadId;
+	/** The length of the formated message */
+	uint16_t msgLength;
+} LogMessage;
+
+
+/** All messages are sent to a sink object
+* This structure is used as the interface for every sink.
+*/
+typedef struct _DomainLogSinkInterface
+{
+	/** For you todo with as you please */
+	void *data; 
+	/** Is enabled or not
+	*/
+	uint32_t enabled;
+	
+	/** Callback called when the sink is inited in the log thread. 
+	* e.g. You will be running in the loggers worker thread.
+	*/
+	void ( *OnLoggingThreadInitCb )( struct _DomainLogSinkInterface *pLogSink );
+	
+	/** Callback called when the sink needs to process a message in the loggers worker thread
+	* 
+	* \parma pLogSink Pointer to your sink object.
+	* \param pMsg The log message to process.
+	*
+	* You DO NOT OWN pMsg AT ALL.  After this callback is called pMsg will be passed onto the next sink in the chain.
+	*/
+	void ( *OnLoggingThreadOnProcessMessageCb )( struct _DomainLogSinkInterface *pLogSink, LogMessage *pMsg );
+
+	/** Callback called when the logging thread is shutdown, this is called from the loggers worker thread.
+	*  
+	*/
+	void ( *OnLoggingThreadClosedCb )( struct _DomainLogSinkInterface *pLogSink );
+
+	/** Callback called when the logging engine has shutdown.  This is called from the thread (normaly the main thread) which called DomainLoggerClose()
+	* The idea is you delete your sink here
+	*/
+	void ( *OnLoggingShutdownCb )( struct _DomainLogSinkInterface *pLogSink );
+} DomainLogSinkInterface;
+
+/** The default Console/Debugger Logging Sink */
+/** @{ */
+
+/** No output at all */
+#define DomainLoggerConsoleOutputDisabled 0
+/** A monocoloured console output */
+#define DomainLoggerConsoleOutputMono 1
+/** Prints at least parts of log message out using colours */
+#define	DomainLoggerConsoleOutputColoured 2
+/** Send log messages to the debuggers output window.
+* Under Windows the message is send via OutputDebugString
+* Under Darwin the message is send via NSLog
+* Under Linux to console
+*/
+#define	DomainLoggerConsoleOutputDebugger 3
+
+/** Turn on, off console logging 
+* See DomainLoggerConsoleOutput
+*/
+void DomainLoggerConsoleEnable( int consoleOutputFlags );
+
+/** @} */
+
+/** The Single File Logging Sink */
+/** @{ */
+
+/** Set the dir were logs are to be written to.
+*/
+void DomainLoggerFileSet( const char *dirPath, const char *prefix );
+
+/** Set the dir were logs are to be written to. wchar_t version.
+*/
+void DomainLoggerFileSetW( const wchar_t *dirPath, const char *prefix );
+
+/** Used to see if we have set a dir were log files are to go.
+*/
+int DomainLoggerFileDirSet();
+
+/** @} */
+
+
+/** Used to add a sink interface to the logging system.
+* WARNING: This is not thread protected so always call this before you call DomainLoggerStart() else bad things might happen.
 *
-* On Windows: Users local apps dir e.g. c:\Users\fred\AppData\Local\%AppName%\logs
-* On Mac: ~/Library/Application Support/%AppName%/logs
-* On iOS: 'Your applications documents folder\getenv("HOME")/Documents'/logs
-* On Linux/FreeBSD/... /var/tmp/%AppName%/logs
+* \return 0=good 1=bad
+*/
+int DomainLoggerAddSink( DomainLogSinkInterface *theSink );
+
+/** Set the default logging level for all domains as they appear to the logger
+*/
+void DomainLoggerSetDefaultLevel( DomainLoggingLevels newDefaultLevel );
+
+/** Sets the logging level for a given domain or domains.
+* domain The logging domain to use. You can use whild cards to get a range of domians e.g.   'my.app.system.*' or 'common.libA*'
+*/
+void DomainLoggerSetLevelToDomain( const char *domain, DomainLoggingLevels loggingLevel );
+
+/** Starts the logger running 
 *
-* The log files will be formatted 'YYMMDD-HHMMSS-%AppName%.log'
+* The application identifier is used to identify the instance of you application.  
+* E.g. If you write app which acts as a server or a commandline tool you would use the same application name but different identifiers ( e.g. name:"MyService" (service:id):"Service", (cli:id):"CLI" 
+* You don't have to supply an app name and/or app identifier (pass NULL) but some logging backends might not work without it.
 */
-int DomainLoggerPreFileLoggingOveridePath( const char *pathToLogFiles );
-#endif
+int DomainLoggerStart( const char *applicationName, const char *applicationIdetifier );
 
-/** Used before you call DomainLoggerOpen() if you want to turn off file based logging (Why I know...) 
-* If you pass --log.file it will be enabled
-*/
-int DomainLoggerPreFileLoggingDisabled();
-
-/** Used to set the default logging level */
-int DomainLoggerPreSetDefaultLevel( DomainLoggingLevels newDefaultLevel );
-
-/** Used before you call DomainLoggerOpen() to turn on console logging
-* Using the command line arg --log.console will enable but this allows you to force it
-* 
-* \param enableColourOutput  If the console can kick out coloured text then do so. 
-*/
-int DomainLoggerPreConsoleLoggingEnable( int enableColourOutput );
-
-
-/** Use to init the logging system.
-* See DomainLoggerPrintCommandLineArgs() for what can be passed
+/** Used to get a logging level from a string
 *
-* \param argc
-* \param argv
-* \param applicationName The name of your application
-* \return 1 if everything started without any problems.
 */
-int DomainLoggerOpen( int argc, char **argv, const char *applicaitonName );
+DomainLoggingLevels DomainLoggerLevelIs( const char *whatLevel );
 
 /** Use this to get the current logging level of a domain
 */
@@ -114,29 +221,31 @@ void DomainLoggerPost( const char *whichDomain, DomainLoggingLevels underLevel, 
 */
 int DomainLoggerClose();
 
-
 /** Use these micros!!! */
 /* Note To Test! gcc had msg... but msvc wants msg, ... don't know if it's a compiler thing */
   
-#if( _WIN32 )
-  #define LogFatal( domain, msg, ... ) DomainLoggerPost( domain, LogLevelFatal, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
-  #define LogError( domain, msg, ... ) DomainLoggerPost( domain, LogLevelError, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
-  #define LogSystem( domain, msg, ... ) DomainLoggerPost( domain, LogLevelSystem, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
-  #define LogWarning( domain, msg, ... ) DomainLoggerPost( domain, LogLevelWarning, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
-  #define LogInfo( domain, msg, ... ) DomainLoggerPost( domain, LogLevelInfo, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
-  #define LogDebug( domain, msg, ... ) DomainLoggerPost( domain, LogLevelDebug, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
-  #define LogVerbose( domain, msg, ... ) DomainLoggerPost( domain, LogLevelVerbose, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
+#if defined( _MSC_VER )
+
+  #define LogFatal( domain, msg, ... ) DomainLoggerPost( domain, DomainLoggingLevelFatal, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
+  #define LogError( domain, msg, ... ) DomainLoggerPost( domain, DomainLoggingLevelError, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
+  #define LogSystem( domain, msg, ... ) DomainLoggerPost( domain, DomainLoggingLevelSystem, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
+  #define LogWarning( domain, msg, ... ) DomainLoggerPost( domain, DomainLoggingLevelWarning, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
+  #define LogInfo( domain, msg, ... ) DomainLoggerPost( domain, DomainLoggingLevelInfo, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
+  #define LogDebug( domain, msg, ... ) DomainLoggerPost( domain, DomainLoggingLevelDebug, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
+  #define LogVerbose( domain, msg, ... ) DomainLoggerPost( domain, DomainLoggingLevelVerbose, __FILE__, __LINE__, __FUNCTION__, msg, __VA_ARGS__ )
+
 #else
-  #define LogFatal( domain, msg... ) DomainLoggerPost( domain, LogLevelFatal, __FILE__, __LINE__, __FUNCTION__, ##msg )
-  #define LogError( domain, msg... ) DomainLoggerPost( domain, LogLevelError, __FILE__, __LINE__, __FUNCTION__, ##msg )
-  #define LogSystem( domain, msg... ) DomainLoggerPost( domain, LogLevelSystem, __FILE__, __LINE__, __FUNCTION__, ##msg )
-  #define LogWarning( domain, msg... ) DomainLoggerPost( domain, LogLevelWarning, __FILE__, __LINE__, __FUNCTION__, ##msg )
-  #define LogInfo( domain, msg... ) DomainLoggerPost( domain, LogLevelInfo, __FILE__, __LINE__, __FUNCTION__, ##msg )
-  #define LogDebug( domain, msg... ) DomainLoggerPost( domain, LogLevelDebug, __FILE__, __LINE__, __FUNCTION__, ##msg )
-  #define LogVerbose( domain, msg... ) DomainLoggerPost( domain, LogLevelVerbose, __FILE__, __LINE__, __FUNCTION__, ##msg )
+
+  #define LogFatal( domain, msg... ) DomainLoggerPost( domain, DomainLoggingLevelFatal, __FILE__, __LINE__, __FUNCTION__, ##msg )
+  #define LogError( domain, msg... ) DomainLoggerPost( domain, DomainLoggingLevelError, __FILE__, __LINE__, __FUNCTION__, ##msg )
+  #define LogSystem( domain, msg... ) DomainLoggerPost( domain, DomainLoggingLevelSystem, __FILE__, __LINE__, __FUNCTION__, ##msg )
+  #define LogWarning( domain, msg... ) DomainLoggerPost( domain, DomainLoggingLevelWarning, __FILE__, __LINE__, __FUNCTION__, ##msg )
+  #define LogInfo( domain, msg... ) DomainLoggerPost( domain, DomainLoggingLevelInfo, __FILE__, __LINE__, __FUNCTION__, ##msg )
+  #define LogDebug( domain, msg... ) DomainLoggerPost( domain, DomainLoggingLevelDebug, __FILE__, __LINE__, __FUNCTION__, ##msg )
+  #define LogVerbose( domain, msg... ) DomainLoggerPost( domain, DomainLoggingLevelVerbose, __FILE__, __LINE__, __FUNCTION__, ##msg )
+
 #endif
-  
-  
+
 #ifdef __cplusplus
 }
 #endif

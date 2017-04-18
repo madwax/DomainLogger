@@ -5,7 +5,11 @@ const int32_t LogThreadStateStarting = 1;
 const int32_t LogThreadStateRunning = 2;
 const int32_t LogThreadStateStopping = 3;
 
-#if( NO_CLIB_WIN32 == 1 )
+/// TODO Turn off volatile qualifiers. I can't work out what I should be using.
+#pragma warning( push )
+#pragma warning( disable:4090 )
+
+#if( DL_PLATFORM_NO_CLIB == 1 )
 
 void *LogMemoryAlloc( size_t sizeInBytes )
 {
@@ -39,10 +43,6 @@ void LogMemoryZero( void *pMemory, size_t bytesToWipe )
 	}
 }
 
-#else
-
-	#if( IS_WIN32 == 1 )
-
 struct tm* localtime_r( time_t *clock, struct tm *result )
 {
 	struct tm *globalOne;
@@ -60,14 +60,15 @@ struct tm* gmtime_r( time_t *clock, struct tm *result )
 {
 	struct tm *globalOne;
 
-	globalOne = localtime( clock );
+	globalOne = gmtime( clock );
 	if( globalOne != NULL )
 	{
 		*result = *globalOne;
 	}
 	return result;
 }
-	#endif
+
+#endif
 
 void *LogMemoryAlloc( size_t sizeInBytes )
 {
@@ -100,9 +101,9 @@ void LogMemoryZero( void *pMemory, size_t bytesToWipe )
 	}
 }
 
-	#if( IS_WIN32 == 0 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+#else
 
-	#error bhw
 void* __Log_GCC_SwapPointer( void * volatile* pTarget, void *pWith )
 {
   // Looking around the interweb turned up what follows.  The Wine and Mono projects do this
@@ -114,11 +115,11 @@ void* __Log_GCC_SwapPointer( void * volatile* pTarget, void *pWith )
   
   return r;
 }
-	#endif
 
 #endif
 
-#if( IS_WIN32 == 1 )
+
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
 int LogConvertCharToWChar( wchar_t *to, size_t toBufferSize, const char *from )
 {
@@ -137,9 +138,6 @@ int LogConvertWCharToChar( char *to, size_t toBufferSize, const wchar_t *from )
 	}
 	return 0;
 }
-#endif
-
-#if( IS_WIN32 == 1 )
 
 /* Not the fastest way to do this I know! */
 wchar_t *LogFindLastDirectorySeperatorWChar( const wchar_t *source )
@@ -169,14 +167,11 @@ wchar_t *LogFindLastDirectorySeperatorWChar( const wchar_t *source )
 	}
 	return NULL;
 }
-#endif
 
-#if( IS_WIN32 == 1 )
 /* This was sourced from http://stackoverflow.com/questions/675039/how-can-i-create-directory-tree-in-c-linux but things happened to it ;)  */
 /** Only need this for Windows */
 int LogCreateDirectoryTreeWChar( const wchar_t *path )
 {
-
 	DWORD errorCode;
 
 	if( CreateDirectoryW( path, NULL ) )
@@ -224,9 +219,17 @@ int LogCreateDirectoryTreeWChar( const wchar_t *path )
 }
 #endif
 
-
 int LogCreateDirectoryTreeChar( const char *path )
 {
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	wchar_t tmpBuffer[ MAX_PATH ];
+
+	LogConvertCharToWChar( tmpBuffer, MAX_PATH, path );
+
+	return LogCreateDirectoryTreeWChar( tmpBuffer );
+
+#elif( DL_PLATFORM_IS_UNIX == 1 )
+
 	char nextPath[ MAX_PATH ];
 	char *charAt; 
 	size_t pathLength;
@@ -242,62 +245,17 @@ int LogCreateDirectoryTreeChar( const char *path )
 	memcpy( nextPath, path, pathLength );
 	nextPath[ pathLength ] = 0;
 
-#if defined( _WIN32 )
-	/** NOT TESTED */
-
-	/* Under windows we don't start with '?:\' or '\\' then it's not a valid path */
-	if( path[ 1 ] != ':' )
-	{
-		if( path[ 1 ] != '\\' )
-		{
-			return 0;
-		}
-
-		if( path[ 0 ] != '\\' )
-		{
-			return 0;
-		}
-
-		charAt = nextPath + 2;
-	}
-	else
-	{
-		if( !( path[ 2 ] == '\\' || path[ 2 ] == '/' ) )
-		{
-			return 0;
-		}
-
-		charAt = nextPath + 3;
-	}
-
-#else
-
 	charAt = nextPath + 1;
-
-#endif
 
 	while( *charAt != 0 )
 	{
 		char was;
 
-#if defined( _WIN32 )
-		if( *charAt == '\\' || *charAt == '/' )
-#else
 		if( *charAt == '/' )
-#endif
 		{
 			was = *charAt;
 			*charAt = 0;
 
-#if defined( _WIN32 ) 
-			if( CreateDirectoryA( nextPath, NULL ) == 0 )
-			{
-				if( GetLastError() != ERROR_ALREADY_EXISTS )
-				{
-					return 0;
-				}
-			}
-#else
 			if( mkdir( nextPath, S_IRWXU ) != 0 )
 			{
 				if( errno != EEXIST )
@@ -305,23 +263,12 @@ int LogCreateDirectoryTreeChar( const char *path )
 					return 0;
 				}
 			}
-#endif
-
 			*charAt = was;
 		}
 
 		++charAt;
 	}
 
-#if defined( _WIN32 )
-	if( CreateDirectoryA( nextPath, NULL ) != 0 )
-	{
-		if( GetLastError() != ERROR_ALREADY_EXISTS )
-		{
-			return 0;
-		}
-	}
-#else
 	if( mkdir( nextPath, S_IRWXU ) != 0 )
 	{
 		if( errno != EEXIST )
@@ -337,7 +284,7 @@ int LogCreateDirectoryTreeChar( const char *path )
 */
 int LogValidateDirectory( const char *path )
 {
-#if( IS_WIN32 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 	wchar_t buf[ MAX_PATH ];  // Using MAX_PATH which is meaning less for NTFS but...
 
 	MultiByteToWideChar( CP_UTF8, 0, path, -1, ( buf + 0 ), MAX_PATH );
@@ -356,7 +303,7 @@ int LogValidateDirectory( const char *path )
 	return 1;
 }
 
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 	#define LOGSPINBUSY 1
 	#define LOGSPINFREE 0
 #else
@@ -364,15 +311,64 @@ int LogValidateDirectory( const char *path )
 	#define LOGSPINFREE 0
 #endif
 
+
+#if( DL_PLATFORM_IS_SPINLOCKS_MUTEXS == 1 )
+
 void LogSpinLockCreate( LogSpinLock *lock )
 {
-#if( __APPLE__ )
+  int er;
+	
+	er = pthread_mutex_init( lock, NULL );
+	if( er != 0 )
+	{
+		fprintf( stdout, "Failed to do the unlock of mutex er:%d\n", er );
+		fflush( stdout );
+	}
+}
+
+int LogSpinLockTryCapture( LogSpinLock *lock )
+{
+  if( pthread_mutex_trylock( lock ) != 0 )
+  {
+    return 1;
+  }
   
-  pthread_mutex_init( lock, NULL );
-  
+	return 0;
+}
+
+void LogSpinLockCapture( LogSpinLock *lock )
+{
+  int er;
+	
+	er = pthread_mutex_lock( ( pthread_mutex_t* )lock );
+	if( er != 0 )
+	{
+		fprintf( stdout, "Failed to do the lock of mutex er:%d (%d)\n", er, EOWNERDEAD );
+		fflush( stdout );
+	}
+}
+
+void LogSpinLockRelease( LogSpinLock *lock )
+{
+	int er;
+	
+  if( ( er = pthread_mutex_unlock( ( pthread_mutex_t* )lock ) ) != 0 )
+	{
+		fprintf( stdout, "Failed to do the unlock of mutex er:%d\n", er );
+		fflush( stdout );
+	}
+}
+
+void LogSpinLockDestroy( LogSpinLock *lock )
+{
+  pthread_mutex_destroy( lock );
+}
+
 #else
+
+void LogSpinLockCreate( LogSpinLock *lock )
+{
 	*lock = LOGSPINFREE;
-#endif
 }
 
 int LogSpinLockTryCapture( LogSpinLock *lock )
@@ -380,24 +376,16 @@ int LogSpinLockTryCapture( LogSpinLock *lock )
 	int r;
 	r = 0;
 
-#if( __APPLE__ )
-  
-  if( pthread_mutex_trylock( lock ) == 0 )
-  {
-    r = 1;
-  }
-  
-#else
 	LogMemoryFullBarrier();
 
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
 	if( InterlockedCompareExchange( lock, LOGSPINBUSY, LOGSPINFREE ) != LOGSPINFREE )
 	{
 		r = 1;
 	}
 
-#elif ( IS_UNIX == 1 )
+#elif ( DL_PLATFORM_IS_UNIX == 1 )
 
 	if( __sync_bool_compare_and_swap( lock, LOGSPINFREE, LOGSPINBUSY ) != LOGSPINFREE )
 	{
@@ -406,20 +394,36 @@ int LogSpinLockTryCapture( LogSpinLock *lock )
 #endif
 
 	LogMemoryFullBarrier();
-#endif
   
 	return r;
 }
 
 void LogSpinLockCapture( LogSpinLock *lock )
 {
-#if( __APPLE__ )
-  
-  pthread_mutex_lock( lock );
-  
-#else
-	while( LogSpinLockTryCapture( lock ) )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	
+	while( 1 )
 	{
+		if( InterlockedCompareExchange( lock, LOGSPINBUSY, LOGSPINFREE ) == LOGSPINFREE )
+		{
+			LogMemoryFullBarrier();
+			return;
+		}		
+		LogThreadYeild();
+	}
+
+#elif ( DL_PLATFORM_IS_UNIX == 1 )
+	while( 1 )
+	{
+		uint32_t i;
+		for( i=0; i<10000; ++i )
+		{
+			if( __sync_bool_compare_and_swap( lock, LOGSPINFREE, LOGSPINBUSY ) )
+			{
+				LogMemoryFullBarrier();
+				return;
+			}
+		}
 		LogThreadYeild();
 	}
 #endif
@@ -427,117 +431,30 @@ void LogSpinLockCapture( LogSpinLock *lock )
 
 void LogSpinLockRelease( LogSpinLock *lock )
 {
-#if( __APPLE__ )
-  
-  pthread_mutex_unlock( lock );
-  
-#else
-  
 	LogMemoryFullBarrier();
 
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
 	InterlockedCompareExchange( lock, LOGSPINFREE, LOGSPINBUSY );
 
-#elif( IS_UNIX == 1 )
+#elif( DL_PLATFORM_IS_UNIX == 1 )
 
-	__sync_bool_compare_and_swap( lock, LOGSPINBUSY, LOGSPINFREE );
+	while( __sync_bool_compare_and_swap( lock, LOGSPINBUSY, LOGSPINFREE ) == LOGSPINFREE )
+	{
+		LogThreadYeild();
+	}
 
 #endif
 	LogMemoryFullBarrier();
-#endif
-  
+ 
 }
 
 void LogSpinLockDestroy( LogSpinLock *lock )
 {
-#if( __APPLE__ )
-  
-  pthread_mutex_destroy( lock );
-  
-#else
 	*lock = 0;
-#endif
 }
-
-void LogReadWriteLockCreate( LogReadWriteLock *rwLock )
-{
-	LogSpinLockCreate( &rwLock->lock );
-	rwLock->readCounter = 0;
-}
-
-void LogReadWriteLockReadCapture( LogReadWriteLock *rwLock )
-{
-	LogSpinLockCapture( &rwLock->lock );
-
-#if( IS_WIN32 == 1 )
-	
-	InterlockedIncrement( &rwLock->readCounter );
-
-#elif ( IS_UNIX == 1 )
-	LogAtomicIncInt32( &rwLock->readCounter );
-#endif
-
-	LogSpinLockRelease( &rwLock->lock );
-}
-
-void LogReadWriteLockReadRelease( LogReadWriteLock *rwLock )
-{
-	LogSpinLockCapture( &rwLock->lock );
-
-#if( IS_WIN32 == 1 )
-
-	InterlockedDecrement( &rwLock->readCounter );
-
-#elif ( IS_UNIX ==	1 )
-
-	LogAtomicDecInt32( &rwLock->readCounter );
 
 #endif
-
-	LogSpinLockRelease( &rwLock->lock );
-}
-
-void LogReadWriteLockReadToWritePromote( LogReadWriteLock *rwLock )
-{
-	LogSpinLockCapture( &rwLock->lock );
-
-#if( IS_WIN32 == 1 )
-
-	InterlockedDecrement( &rwLock->readCounter );
-
-	while( InterlockedCompareExchange( &rwLock->readCounter, 0, 0 ) != 0 )
-	{
-		LogThreadYeild();
-	}
-
-#elif ( IS_UNIX ==	1 )
-
-	LogAtomicDecInt32( &rwLock->readCounter );
-
-	while( __sync_bool_compare_and_swap( &rwLock->readCounter, 0, 0 ) == 0 )
-	{
-		LogThreadYeild();
-	}
-
-#endif
-}
-
-void LogReadWriteLockWriteCapture( LogReadWriteLock *rwLock )
-{
-	LogSpinLockCapture( &rwLock->lock );
-}
-
-void LogReadWriteLockWriteRelease( LogReadWriteLock *rwLock )
-{
-	LogSpinLockRelease( &rwLock->lock );
-}
-
-void LogReadWriteLockDestroy( LogReadWriteLock *rwLock )
-{
-	LogSpinLockDestroy( &rwLock->lock );
-	rwLock->readCounter = 0;
-}
 
 int LogMessageQueueCreate( LogMessageQueue *theQueue )
 {
@@ -549,163 +466,201 @@ int LogMessageQueueCreate( LogMessageQueue *theQueue )
 	theQueue->numberIn = 0;
 	theQueue->head = NULL;
 	theQueue->tail = NULL;
-
-#if( __APPLE__ )
-  LogSpinLockCreate( &theQueue->lock );
-#endif
-  
+	
+	LogSpinLockCreate( &theQueue->protection );
+	
 	return 0;
 }
 
-LogMessage *LogMessageQueuePop( volatile LogMessageQueue *theQueue )
+
+int LogMessageQueueDestroy( LogMessageQueue *theQueue )
 {
-	volatile LogMessage *pR;
-
-#if( __APPLE__ )
-  
-  LogMemoryFullBarrier();
-  asm volatile("" ::: "memory");
-  
-  LogSpinLockCapture( &theQueue->lock );
-  
-  pR = theQueue->head;
-  if( pR != NULL )
-  {
-    theQueue->head = pR->next;
-    
-    if( theQueue->tail == pR )
-    {
-      theQueue->tail = NULL;
-    }
-    
-    pR->next = NULL;
-   
-    LogAtomicDecInt32( &theQueue->numberIn );
-  }
- 
-  LogMemoryFullBarrier();
-  asm volatile("" ::: "memory");
-  
-  LogSpinLockRelease( &theQueue->lock );
-  
-#else 
-
-	LogMemoryFullBarrier();
- 
-	if( ( pR = LogAtomicCompareExchangePointer( ( void* volatile* ) &theQueue->head, NULL, NULL ) ) != NULL )
+	if( theQueue == NULL )
 	{
-		LogAtomicExchangePointer( ( void* volatile* ) &theQueue->head, pR->next );
-		LogAtomicCompareExchangePointer( ( void* volatile* ) &theQueue->tail, pR->next, pR );
-		
-		LogAtomicDecInt32( &theQueue->numberIn );
-    
-    pR->next = NULL;
+		return 1;
 	}
+	
+	LogSpinLockDestroy( &theQueue->protection );
 
-	LogMemoryFullBarrier();
-#endif
-  
-	return ( LogMessage* )pR;
+	theQueue->numberIn = 0;
+	theQueue->head = NULL;
+	theQueue->tail = NULL;
+
+	return 0;
 }
 
-void LogMessageQueuePush( volatile LogMessageQueue *theQueue, volatile LogMessage *item )
+LogMessage *LogMessageQueuePop( LogMessageQueue *theQueue )
 {
-#if( __APPLE__ )
-  item->next = NULL;
-	  
-  LogMemoryFullBarrier();
-  asm volatile("" ::: "memory");
- 
-  LogSpinLockCapture( &theQueue->lock );
-  
-  /*
-  int jf = 0;
-  if( theQueue->head == NULL )
-  {
-    jf = 100;
-  }
-  */
-  if( theQueue->tail == NULL )
-  {
-    /*
-    ++jf;
-    if( theQueue->head != NULL )
-    {
-      printf( "BAD" );
-    }
-    */
-    theQueue->tail = item;
-    theQueue->head = item;
-  }
-  else
-  {
-    theQueue->tail->next = item;
-    theQueue->tail = item;
-  }
-  
-  /**
-  if( theQueue->head == NULL )
-  {
-    printf( " fd %d %d %d\n", jf, ( int )item->lineNumber, ( int )item->count );
-  }
-  */
-  
-  LogAtomicIncInt32( &theQueue->numberIn );
-  
-  LogMemoryFullBarrier();
-  asm volatile("" ::: "memory");
-  
-  LogSpinLockRelease( &theQueue->lock );
-  
-#else
+	LogMessage *pR;
 
-  volatile LogMessage *was;
-
-	if( item == NULL )
-	{
-		return;
-	}
-
-  if( item->next != NULL )
-  {
-    return;
-  }
-  
 	LogMemoryFullBarrier();
-  
-	was = LogAtomicCompareExchangePointer( ( void* volatile* )&( theQueue->tail ), item, NULL );
-	if( was == NULL )
+	
+	LogSpinLockCapture( &theQueue->protection );
+
+	pR = theQueue->head;
+	if( pR != NULL )
 	{
-		LogAtomicExchangePointer( ( void* volatile* )&theQueue->head, item );
+		if( pR == theQueue->tail )
+		{
+			if( theQueue->numberIn != 1 )
+			{
+				fprintf( stdout, "Clear %d \n", ( int )theQueue->numberIn );
+				fflush( stdout );
+			}
+		
+			theQueue->head = NULL;
+			theQueue->tail = NULL;
+			
+			LogAtomicDecInt32( ( int32_t* )&theQueue->numberIn );				
+		}
+		else
+		{
+			theQueue->head = pR->next;
+			LogAtomicDecInt32( ( int32_t* )&theQueue->numberIn );	
+		}
+	}
+	else 
+	{
+		if( theQueue->tail != NULL )
+		{
+			fprintf( stdout, "Yara %d \n", ( int )theQueue->numberIn );
+			fflush( stdout );
+		}
+	}
+	
+	LogMemoryFullBarrier();
+	
+	LogSpinLockRelease( &theQueue->protection );
+
+	return pR;
+}
+
+LogMessage *LogMessageQueuePopChain( LogMessageQueue *theQueue, uint32_t maxNumberOf, uint32_t *numberReturned, LogMessage **pEnd )
+{
+	LogMessage *first;
+
+	LogMemoryFullBarrier();
+
+	first = NULL;
+
+	LogSpinLockCapture( &theQueue->protection );
+	if( theQueue->head == NULL )
+	{
+		*numberReturned = 0;
 	}
 	else
 	{
-		LogAtomicExchangePointer( ( void* volatile* )&theQueue->tail->next, item );
-		LogAtomicExchangePointer( ( void* volatile* )&theQueue->tail, item );
-	}
+		uint32_t count;
+		LogMessage *end;		
+		
+		count = 0;
+		first = theQueue->head;
+		end = first;
 
-	LogAtomicIncInt32( &theQueue->numberIn );
+		while( count < maxNumberOf && end->next != NULL )
+		{
+			++count;
+			end = end->next;
+		}
+
+		*numberReturned = count;
+		if( end->next == NULL )
+		{
+			theQueue->head = NULL;
+			theQueue->tail = NULL;
+			theQueue->numberIn = 0;
+		}
+		else
+		{
+			theQueue->head = end->next;
+			theQueue->numberIn -= count;
+
+			end->next = NULL;
+		}
+
+		*pEnd = end;
+	}
+	
+	LogSpinLockRelease( &theQueue->protection );
+
+	return first;
+}
+
+void LogMessageQueuePush( LogMessageQueue *theQueue, LogMessage *item )
+{
+	LogSpinLockCapture( &theQueue->protection );
+	
+	LogMemoryFullBarrier();
+	
+	item->next = NULL;
+
+	if( theQueue->tail == NULL )
+	{		
+		if( theQueue->numberIn != 0 )
+		{
+			fprintf( stdout, "  BUGGER 1 %d\n", ( int )theQueue->numberIn );
+			fflush( stdout );
+		}
+	
+		if( theQueue->head != NULL )
+		{
+			fprintf( stdout, "  BUGGER 2\n" );
+			fflush( stdout );
+		}
+					
+		theQueue->head = item;
+		theQueue->tail = item;
+	}
+	else
+	{
+		theQueue->tail->next = item;
+		theQueue->tail = item;
+	}
+		
+	LogAtomicIncInt32( ( int32_t* )&theQueue->numberIn );		
 
 	LogMemoryFullBarrier();
-#endif
+
+	LogSpinLockRelease( &theQueue->protection );
 }
 
 void LogMessageQueuePushChain( LogMessageQueue *theQueue, LogMessage *theChainHead, LogMessage *theChainTail, uint32_t numberInChain )
 {
 	LogMemoryFullBarrier();
-  
-	if( LogAtomicCompareExchangePointer( ( void* volatile* )&theQueue->head, NULL, NULL ) == NULL )
+
+	if( theChainHead != NULL && theChainTail != NULL && numberInChain != 0 )
 	{
-		LogAtomicExchangePointer( ( void* volatile* )&theQueue->head, theChainHead );
-		LogAtomicExchangePointer( ( void* volatile* )&theQueue->tail, theChainTail );
+		LogSpinLockCapture( &theQueue->protection );
+	
+		if( theQueue->tail == NULL )
+		{
+			theQueue->head = theChainHead;
+			theQueue->tail = theChainTail;
+		}
+		else
+		{
+			theQueue->tail->next = theChainHead;
+			theQueue->tail = theChainTail;
+		}
+
+		theQueue->numberIn += numberInChain;
+
+		LogSpinLockRelease( &theQueue->protection );	
 	}
-	else
+}
+
+LogMessageBlock *LogMessageDestroyBlock( LogMessageBlock *theBlock )
+{
+	LogMessageBlock *next;
+
+	next = NULL;
+
+	if( theBlock != NULL )
 	{
-		LogAtomicExchangePointer( ( void* volatile* )&theQueue->tail->next, theChainHead );
-		LogAtomicExchangePointer( ( void* volatile* )&theQueue->tail, theChainTail );
+		next = theBlock->next;
+		LogMemoryFree( theBlock );
 	}
-		
-	LogAtomicSetInt32( &theQueue->numberIn, numberInChain );
+	return next;
 }
 
 LogMessageBlock* LogMessageCreateBlock()
@@ -768,27 +723,27 @@ DomainLoggingLevels DomainLoggerReadLevelFromString( const char *str )
 {
 	if( str == NULL )
 	{
-		return LogLevelWarning;
+		return DomainLoggingLevelWarning;
 	}	
 
 	if( strcasecmp( "info", str ) == 0 )
 	{
-		return LogLevelInfo;
+		return DomainLoggingLevelInfo;
 	}
 	else if( strcasecmp( "debug", str ) == 0 )
 	{
-		return LogLevelDebug;
+		return DomainLoggingLevelDebug;
 	}
 	else if( strcasecmp( "verbose", str ) == 0 )
 	{
-		return LogLevelVerbose;
+		return DomainLoggingLevelVerbose;
 	}
-	return LogLevelWarning;
+	return DomainLoggingLevelWarning;
 }
 
 
 
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
 static DWORD LogThreadEntryPoint( void *pUserData )
 {
@@ -807,14 +762,14 @@ static DWORD LogThreadEntryPoint( void *pUserData )
 
 #else
 
-	#if( IS_ANDROID == 1 )
+	#if( DL_PLATFORM_IS_ANDROID == 1 )
 
 static void LogThreadExitHandler( int sigId )
 {
 	pthread_exit( 0 );
 }	
 
-	#endif
+#endif
 
 /** The thread entry point pthreads version 
 */
@@ -824,7 +779,7 @@ static void* LogThreadEntryPoint( void *pUserData )
 
 	pTheThread = ( LogThread* )pUserData;
 
-#if( IS_ANDROID == 1 )
+#if( DL_PLATFORM_IS_ANDROID == 1 )
 	// Google missed out pthread_cancel, WHY!? Never mind.
 	// Anyway to get around this we need to use a signal handler to kill the thread.
 	// I found some of this on Stackoverflow and the Android port of VLC has there own version using local thread storage.
@@ -906,7 +861,7 @@ int LogThreadStart( LogThread *pTheThread )
 	// set the state to starting, this will be change in the created thread.
 	pTheThread->state = LogThreadStateStarting;
 
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 	// create the thread but suppended
 	pTheThread->hThread = CreateThread( NULL, 0, &LogThreadEntryPoint, ( void* )pTheThread, CREATE_SUSPENDED, &pTheThread->threadId );
 	if( pTheThread->hThread == NULL )
@@ -942,7 +897,7 @@ int LogThreadStart( LogThread *pTheThread )
 
 int LogThreadKill( LogThread *pTheThread )
 {
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
 	if( pTheThread == NULL )
 	{
@@ -961,15 +916,23 @@ int LogThreadKill( LogThread *pTheThread )
 
 	pTheThread->hThread = NULL;
 	pTheThread->state = LogThreadStateStopped;
+
 #else
-	#if( IS_ANDROID == 1 )
+
+	#if( DL_PLATFORM_IS_ANDROID == 1 )
+
 	/** Send the signal that will inturn kill the thread */
 	pthread_kill( pTheThread->hThread, SIGUSR1 );
+	
 	#else
+	
 	pthread_cancel( pTheThread->hThread );
+	
 	#endif
+	
 	pTheThread->hThread = 0;
 	pTheThread->state = LogThreadStateStopped;
+
 #endif
 
 	return 0;
@@ -979,274 +942,189 @@ ThreadId LogThreadCurrentThreadId()
 {
 	ThreadId r;
 
-#if( IS_WIN32 == 1 )
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+
 	r = GetCurrentThreadId();
-#elif( IS_OSX == 1 )
+
+#elif( DL_PLATFORM_IS_DARWIN == 1 )
+
 	r = pthread_mach_thread_np( pthread_self() );
-#elif( IS_IOS == 1 )
-	r = pthread_mach_thread_np( pthread_self() );
-#elif( IS_LINUX == 1 )
+
+#elif( DL_PLATFORM_IS_LINUX == 1 )
+
 	r = syscall( SYS_gettid );
-#elif( IS_ANDROID == 1 )
+
+#elif( DL_PLATFORM_IS_ANDROID == 1 )
+
 	r = syscall( SYS_gettid );
-#elif( IS_FREEBSD == 1 )
+
+#elif( DL_PLATFORM_IS_FREEBSD == 1 )
 	{
 		long lwpid;
 		thr_self( &lwpid );
 		r = ( ThreadId )lwpid;
 	}
+
 #else
+
 	r = 0;
 #endif
 
 	return r;
 }
 
-int LogFileCreate( LogFile *pFile )
+int LogThreadEventCreate( LogThreadEvent *pEvent )
 {
-	pFile->sourceType = LogFileSourceNone;
+#if( DL_PLATFORM_IS_WIN32 == 1 )
 
-#if( IS_WIN32 == 1 )
-	pFile->hFile = INVALID_HANDLE_VALUE;
-#else
-	pFile->hFile = -1;
-#endif
-	return 0;
-}
-
-int LogFileOpenForWritingFilePathWChar( LogFile *pFile, const wchar_t *filePath )
-{
-	int r;
-
-	r = 1;
-
-#if( IS_WIN32 == 1 )
-	// Lots of options!? Need to think about
-	pFile->hFile = CreateFileW( filePath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
-
-	if( pFile->hFile == INVALID_HANDLE_VALUE )
-	{
-		reportFatal( "Failed to open log file" );
-	}
-	else
-	{
-		r = 0;
-		pFile->sourceType = LogFileSourceFile;
-	}
-#endif
-	return r;
-}
-
-int LogFileOpenForWritingFilePath( LogFile *pFile, const char *filePath )
-{
-	int r;
-
-	r = 1;
-
-#if( IS_WIN32 == 1 )
-	// Lots of options!? Need to think about
-	pFile->hFile = CreateFileA( filePath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
-
-	if( pFile->hFile == INVALID_HANDLE_VALUE )
-	{
-		reportFatal( "Failed to open log file" );
-	}
-	else
-	{
-		r = 0;
-		pFile->sourceType = LogFileSourceFile;
-	}
-#else
-	pFile->hFile = open( filePath, O_CREAT|O_APPEND|O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH );
-	if( pFile->hFile == -1 )
-	{
-		reportFatal( "Failed to open log file" );
-	}
-	else
-	{
-		r = 0;
-		pFile->sourceType = LogFileSourceFile;
-	}
-#endif
-	return r;
-}
-
-/** Use to open stdout so we can write to it using common code */
-int LogFileOpenStdOut( LogFile *pFile )
-{
-  int r;
-  
-#if( IS_WIN32 == 1 )
-	pFile->hFile = GetStdHandle( STD_OUTPUT_HANDLE );
-	
-	// if the handle is invalid its due to the application does not have a stdout which for a Window window's app is the default
-	if( pFile->hFile != INVALID_HANDLE_VALUE )
-	{
-		r = 0;
-		pFile->sourceType = LogFileSourceStdOut;
-	}
-  else
-  {
-    r = 1;
-  }
-  
-#elif( IS_IOS == 1 )
-	// iOS does not allow access to stdout
-#else
-	// Everyone else!	
-	pFile->hFile = 1;
-	pFile->sourceType = LogFileSourceStdOut;
-
-	r = 0;
-#endif
-	
-	return r;
-}
-
-
-int LogFileWrite( LogFile *pFile, const char *data, uint32_t dataSize )
-{
-	int r;
-	r = 1;
-	switch( pFile->sourceType )
-	{
-		case LogFileSourceFile:
-		case LogFileSourceStdOut:
-		{
-#if( IS_WIN32 == 1 )
-			if( pFile->hFile != INVALID_HANDLE_VALUE )
-			{
-				DWORD bytesWritten;
-				char *d;
-
-				d = ( char* )data;
-
-				bytesWritten = 0;
-
-				while( dataSize )
-				{
-					if( WriteFile( pFile->hFile, d, dataSize, &bytesWritten, NULL ) == 0 )
-					{
-						reportFatal( "Failed to wrtite to file" );
-						return 1;
-					}
-
-					dataSize -= bytesWritten;
-					d += bytesWritten;
-				}
-
-				r = 0;
-			}
-#else
-			if( pFile->hFile != 0 )
-			{
-				if( write( pFile->hFile, ( const void* )data, dataSize ) != -1 )
-				{
-					r = 0;
-				}
-				else
-				{
-					reportFatal( "Failed to wrtite to file" );
-				}
-			}
-#endif			
-		}break;
-
-		default:
-		{
-		}break;
-	}
-
-	return r;
-}
-
-int LogFileIsOpen( LogFile *pFile )
-{
-	int r;
-
-	r = 0;
-	switch( pFile->sourceType )
-	{
-		case LogFileSourceFile:
-		case LogFileSourceStdOut:
-		{
-#if( IS_WIN32 == 1 )
-			if( pFile->hFile != INVALID_HANDLE_VALUE )
-			{
-				r = 1;
-			}
-#else
-			if( pFile->hFile != -1 )
-			{
-				r = 1;
-			}
-#endif
-		}break;
-
-		default:
-		{
-		}break;
-	}
-
-	return r;
-}
-
-
-int LogFileFlush( LogFile *pFile )
-{
-#if( IS_WIN32 == 1)
-	if( pFile->hFile == INVALID_HANDLE_VALUE )
+	pEvent->hEvent = CreateEventA( NULL, TRUE, FALSE, "LogFreeQueue" );
+	if( pEvent->hEvent == NULL )
 	{
 		return 1;
 	}
 
-	FlushFileBuffers( pFile->hFile );
-#else
-	if( pFile->hFile == -1 )
+#endif
+
+#if( DL_PLATFORM_IS_UNIX == 1 )
+
+	int err;
+
+	pEvent->created = 0;
+
+	if( ( err = pthread_mutex_init( &pEvent->hMutex, NULL ) ) == 0 )
+	{
+		if( ( err = pthread_cond_init( &pEvent->hCondition, NULL ) ) == 0 )
+		{
+			pEvent->created = 1;
+		}
+		else
+		{
+			pthread_mutex_destroy( &pEvent->hMutex );
+			return 1;
+		}
+	}
+	else
+	{
+		// failed
+		return 1;
+	}
+
+#endif
+	
+	return 0;
+}
+
+int LogThreadEventTrap( LogThreadEvent *pEvent )
+{
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	if( pEvent->hEvent == NULL )
 	{
 		return 1;
 	}
 
-	fsync( pFile->hFile );
+	SetEvent( pEvent->hEvent );
+	
 #endif
-	return 0;
-}
 
-int LogFileClose( LogFile *pFile )
-{
-	switch( pFile->sourceType )
+#if( DL_PLATFORM_IS_UNIX == 1 )
+
+	if( pEvent->created == 0 )
 	{
-		case LogFileSourceFile:
-		{
-#if( IS_WIN32 == 1 )
-			if( pFile->hFile != INVALID_HANDLE_VALUE )
-			{
-				CloseHandle( pFile->hFile );
-				pFile->hFile = INVALID_HANDLE_VALUE;
-			}
-#else
-			if( pFile->hFile != 0 )
-			{
-				close( pFile->hFile );
-				pFile->hFile = -1;
-			}
-#endif
-		}break;
-
-		case LogFileSourceStdOut:
-		{
-#if( IS_WIN32 == 1 )
-			pFile->hFile = INVALID_HANDLE_VALUE;
-#else
-			pFile->hFile = -1;
-#endif
-		}break;
-      
-    default:
-    {
-    }break;
+		return 1;
 	}
 
-	pFile->sourceType = LogFileSourceNone;
+	pthread_cond_signal( &pEvent->hCondition );
+
+#endif
+
 	return 0;
 }
+
+int LogThreadEventWait( LogThreadEvent *pEvent, int *isTimeout )
+{
+	int r;
+
+	r = 1;
+
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+	DWORD action;
+	
+	if( pEvent->hEvent != NULL )
+	{
+		// We wake up every second just incase something bad happens and we need to shutdown.
+		action = WaitForSingleObjectEx( pEvent->hEvent, 1000, TRUE );
+		if( action == WAIT_OBJECT_0 )
+		{
+			if( isTimeout != NULL )
+			{
+				*isTimeout = 0;
+			}
+
+			ResetEvent( pEvent->hEvent );
+		
+			r = 0;
+		}
+		else if( action == WAIT_TIMEOUT )
+		{
+			if( isTimeout != NULL )
+			{
+				*isTimeout = 1;
+			}
+
+			ResetEvent( pEvent->hEvent );
+			r = 0;
+		}
+		else 
+		{
+			r = 1;
+		}
+		ResetEvent( pEvent->hEvent );
+	}
+#endif
+
+#if( DL_PLATFORM_IS_UNIX == 1 )
+
+	if( pEvent->created == 0 )
+	{
+		return 1;
+	}
+
+	pthread_mutex_lock( &pEvent->hMutex );
+
+	pthread_cond_wait( &pEvent->hCondition, &pEvent->hMutex );
+
+	pthread_mutex_unlock( &pEvent->hMutex );
+
+#endif
+
+	return 0;
+}
+
+void LogThreadEventDestroy( LogThreadEvent *pEvent )
+{
+#if( DL_PLATFORM_IS_WIN32 == 1 )
+
+	if( pEvent->hEvent != NULL )
+	{
+		CloseHandle( pEvent->hEvent );
+		pEvent->hEvent = NULL;
+	}
+
+#endif
+
+#if( DL_PLATFORM_IS_UNIX == 1 )
+
+	if( pEvent->created == 1 )
+	{
+    pthread_mutex_destroy( &pEvent->hMutex );
+    pthread_cond_destroy( &pEvent->hCondition );		
+	}
+
+#endif
+}
+
+
+#if( DL_PLATFORM_NO_CLIB == 1 )
+#parama warning( pop )
+#endif
+

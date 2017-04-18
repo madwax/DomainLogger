@@ -28,7 +28,7 @@ void Test_DomainLogger_Queue_1_ProducterThreadFunction( void *pUserData )
 
 		if( rateController == 200 )
 		{
-			pCurrent = ( LogMessage* )LogMemoryAlloc( sizeof( LogMessage ) );
+			pCurrent = ( LogMessage* )LogMemoryAlloc( ( size_t )sizeof( LogMessage ) );
 			if( pCurrent != NULL )
 			{
 				LogMemoryZero( pCurrent, sizeof( LogMessage ) );
