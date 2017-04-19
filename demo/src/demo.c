@@ -16,25 +16,42 @@ static const char *theApplicationName = "Demo.DomainLogger.1";
 
 int main( int argc, char **argv )
 {
-	DomainLogSinkInterface *pConsoleSink;
-
+	int mode;
 	int s,ss;
 	float sss;
 
+	mode = 0;
 	s = 32;
 	ss = 0x42;
 	sss = 10.042f;
 
-	//DomainLoggerPreConsoleLoggingEnable( 0 );
-
 	/* Start the logger going */
-	pConsoleSink = DomainLoggerConsoleSinkCreate();
+	for( int i=1; i<argc; i++ )
+	{
+		if( strcasecmp( argv[ i ], "--colour" ) == 0 )
+		{
+			mode = 1;
+		}
+		else if( strcasecmp( argv[ i ], "--debug" ) == 0 )
+		{
+			mode = 2;
+		}
+	}
 	
-	DomainLoggerConsoleSinkEnable( pConsoleSink, DomainLoggerConsoleOutputMono );
+	if( mode == 0 )
+	{
+		DomainLoggerConsoleEnable( DomainLoggerConsoleOutputMono );
+	}
+	else if( mode == 1 )
+	{
+		DomainLoggerConsoleEnable( DomainLoggerConsoleOutputColoured );
+	}
+	else if( mode == 2 )
+	{
+		DomainLoggerConsoleEnable( DomainLoggerConsoleOutputDebugger );
+	}
 	
-	DomainLoggerAddSink( pConsoleSink );
-	
-	DomainLoggerSetDefaultLevel( LogLevelVerbose );
+	DomainLoggerSetDefaultLevel( DomainLoggingLevelVerbose );
 	
 	if( DomainLoggerStart( theApplicationName, NULL ) )
 	{

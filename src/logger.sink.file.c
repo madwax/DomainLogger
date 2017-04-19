@@ -193,7 +193,7 @@ static void DomainLogSinkFileInterfaceLogRender( DomainLogSinkFileInterface *pTh
 			hours = ( uint32_t )( delta / ( 1000 * 60 * 60 ) );
 		}
 				
-		numberOf = snprintf( pTheFilkeSink->outputBuffer, DOMAINLOGGER_SINK_FILE_INTERFACE_OUTPUT_BUFFER_SIZE, "%s¬%d:%02d:%02d:%04d¬%s¬%d¬'%s'¬\n", theLevels[ pTheLogMessage->level ], hours, mins, secs, mils, pTheLogMessage->lpDomain, pTheLogMessage->threadId, pTheLogMessage->msg );
+		numberOf = snprintf( pTheFilkeSink->outputBuffer, DOMAINLOGGER_SINK_FILE_INTERFACE_OUTPUT_BUFFER_SIZE, "%s~%d:%02d:%02d:%04d~%s~%d~'%s'\n", theLevels[ pTheLogMessage->level ], hours, mins, secs, mils, pTheLogMessage->lpDomain, pTheLogMessage->threadId, pTheLogMessage->msg );
 
 		DomainLogSinkFileInterfaceLogWrite( pTheFilkeSink, pTheFilkeSink->outputBuffer, numberOf );
 	}
