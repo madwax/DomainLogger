@@ -2,29 +2,57 @@
 #include "logger.sink.file.h"
 #include "logger.sink.console.h"
 
+#if( DL_PLATFORM_IS_UNIX == 1 ) 
+
+#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
+
+#if( DL_PLATFORM_IS_DARWIN == 1 )
+
+#include <mach/mach_init.h>
+#include <mach/mach_traps.h>
+#include <mach/mach_time.h>
+
+#endif
+
+#endif
+
 static DomainLogSinkInterface *pTheConsoleLogSink = NULL;
 static DomainLogSinkInterface *pTheFileLogSink = NULL;
 
-#if( DL_PLATFORM_IS_UNIX == 1 )
+#if( DL_PLATFORM_IS_DARWIN == 1 )
+
+static uint64_t GetTickCount64()
+{
+	static mach_timebase_info_data_t info = { .denom = 0 };
+	if( info.denom == 0 )
+	{
+		mach_timebase_info( &info );
+	}
+	return ( mach_absolute_time() * info.numer ) / ( 1000000 * info.denom );
+}
+
+#elif( DL_PLATFORM_IS_UNIX == 1 )
 
 static uint64_t GetTickCount64()
 {
 	uint64_t r;
 	struct timespec x;
 
-	clock_gettime( CLOCK_MONOTONIC, &x );
-
-	r = x.tv_sec * 1000;
-	if( x.tv_nsec != 0 )
+	r = 0;
+	if( clock_gettime( CLOCK_MONOTONIC, &x ) == 0 )
 	{
-		r += ( x.tv_nsec / 1000000 ); 
+		r = x.tv_sec * 1000;
+		if( x.tv_nsec != 0 )
+		{
+			r += ( x.tv_nsec / 1000000 ); 
+		}
 	}
-
 	return r;
 }
 
 #endif
-
 
 void DomainLoggerConsoleEnable( int consoleOutputFlags )
 {
@@ -314,7 +342,7 @@ static void DomainLoggerWorkerThreadSendToSinks( LogMessage *pTarget )
 */
 void DomainLoggerWorkerThreadEntryPoint( void *pUserData )
 {
-	LogMessage *firstMessages, *lastMessage;
+	LogMessage *firstMessage, *lastMessage;
 	DomainLoggerClient *pTheClient;
 	DomainLogSinkItem *pItem;
 	uint32_t numberOfMessages;
@@ -331,15 +359,15 @@ void DomainLoggerWorkerThreadEntryPoint( void *pUserData )
 			( *( pItem->theSink->OnLoggingThreadInitCb ) )( pItem->theSink );
 		}
 	}
-	
-	pTheClient->isRunning = 1;
 
 	shutdownNow = 0;
+	
+	LogAtomicSetInt32( &pTheClient->isRunning, 1 );
 
 	// keep running untill shutdownFlag goes true.
 	while( shutdownNow == 0 )
 	{
-		firstMessages = NULL;
+		firstMessage = NULL;
 
 		// Pull up to 10 messages from the incoming log queue
 		// get this over and done with so we don't hold up worker threads.
@@ -347,11 +375,11 @@ void DomainLoggerWorkerThreadEntryPoint( void *pUserData )
 		
 		if( theLoggerClient.theQueue.numberIn )
 		{
-			firstMessages = LogMessageQueuePopChain( &theLoggerClient.theQueue, 10, &numberOfMessages, &lastMessage );
+			firstMessage = LogMessageQueuePopChain( &theLoggerClient.theQueue, 10, &numberOfMessages, &lastMessage );
 		}
 		LogSpinLockRelease( &theLoggerClient.theQueueProtection );
 
-		if( firstMessages == NULL )
+		if( firstMessage == NULL )
 		{
 			if( theLoggerClient.shutdownFlag == 1 )
 			{
@@ -370,7 +398,7 @@ void DomainLoggerWorkerThreadEntryPoint( void *pUserData )
 		{
 			LogMessage *pTarget;
 
-			pTarget = firstMessages;
+			pTarget = firstMessage;
 
 			while( pTarget != NULL )
 			{
@@ -380,19 +408,55 @@ void DomainLoggerWorkerThreadEntryPoint( void *pUserData )
 
 			// now return the messages to the free queue
 			LogSpinLockCapture( &theLoggerClient.theFreeQueueProtection );
-			LogMessageQueuePushChain( &theLoggerClient.theFreeQueue, firstMessages, lastMessage, numberOfMessages );
+			LogMessageQueuePushChain( &theLoggerClient.theFreeQueue, firstMessage, lastMessage, numberOfMessages );
 			LogSpinLockRelease( &theLoggerClient.theFreeQueueProtection );
 		}
 	}
 	
 	// We need to flush whats in the queue.
-	if( i == sz )
+	// we reuse shutdownNow for the hell of it.
+	shutdownNow = 0;
+
+	while( shutdownNow == 0 )
 	{
+		firstMessage = NULL;
+
+		LogSpinLockCapture( &theLoggerClient.theQueueProtection );
+		if( theLoggerClient.theQueue.numberIn )
+		{
+			firstMessage = LogMessageQueuePopChain( &theLoggerClient.theQueue, theLoggerClient.theQueue.numberIn, &numberOfMessages, &lastMessage );
+		}
+		LogSpinLockRelease( &theLoggerClient.theQueueProtection );
+		
+		if( firstMessage == NULL )
+		{
+			shutdownNow = 1;
+		}
+		else
+		{
+			LogMessage *pTarget;
+
+			pTarget = firstMessage;
+
+			while( pTarget != NULL )
+			{
+				DomainLoggerWorkerThreadSendToSinks( pTarget );
+				pTarget = pTarget->next;
+			}
+
+			// now return the messages to the free queue
+			LogSpinLockCapture( &theLoggerClient.theFreeQueueProtection );
+			LogMessageQueuePushChain( &theLoggerClient.theFreeQueue, firstMessage, lastMessage, numberOfMessages );
+			LogSpinLockRelease( &theLoggerClient.theFreeQueueProtection );
+		}
 	}
+
+	LogAtomicSetInt32( &pTheClient->isRunning, 0 );
 }
 
 
 /************************* Public API *************************/
+
 
 DomainLoggingLevels DomainLoggerLevelIs( const char *whatLevel )
 {
@@ -425,6 +489,7 @@ void DomainLoggerSetDefaultLevel( DomainLoggingLevels newDefaultLevel )
 
 	theLoggerClient.defaultLoggingLevel = newDefaultLevel;
 }
+
 
 void DomainLoggerSetLevelToDomain( const char *domain, DomainLoggingLevels loggingLevel )
 {
@@ -492,6 +557,7 @@ void DomainLoggerSetLevelToDomain( const char *domain, DomainLoggingLevels loggi
 	}
 }
 
+
 int DomainLoggerStart( const char *applicationName, const char *applicationIdetifier )
 {
 	DomainLoggerClientCheck();
@@ -510,13 +576,14 @@ int DomainLoggerStart( const char *applicationName, const char *applicationIdeti
 	LogThreadStart( &theLoggerClient.theWorkerThread );
 
 	// we wait for the logging thread to start up and get running.
-	while( theLoggerClient.isRunning == 0 )
+	while( LogAtomicCompInt32( &theLoggerClient.isRunning, 0 ) )
 	{
 		LogThreadYeild();
 	}
 
 	return 0;
 }
+
 
 DomainLoggingLevels DomainLoggerGetLevel( const char *whichDomain )
 {
@@ -529,6 +596,7 @@ DomainLoggingLevels DomainLoggerGetLevel( const char *whichDomain )
 	}
 	return DomainLoggingLevelWarning;
 }
+
 
 static int DomainLoggerClientCreateDomain( const char *whichDomain, DomainLoggingLevels testLevel )
 {
@@ -663,6 +731,7 @@ void DomainLoggerPost( const char *whichDomain, DomainLoggingLevels underLevel, 
 	}
 }
 
+
 int DomainLoggerClose()
 {
 	uint32_t i;
@@ -720,6 +789,7 @@ int DomainLoggerClose()
 	return 0;
 }
 
+
 static DomainLogSinkItem *DomainLoggerSinkItemCreate( DomainLogSinkInterface *theSink )
 {
 	DomainLogSinkItem *r;
@@ -740,6 +810,7 @@ static DomainLogSinkItem *DomainLoggerSinkItemCreate( DomainLogSinkInterface *th
 	return r;
 }
 
+
 static void DomainLoggerSinkItemDestroy(  DomainLogSinkItem *theSinkItem )
 {
 	if( theSinkItem == NULL )
@@ -755,6 +826,7 @@ static void DomainLoggerSinkItemDestroy(  DomainLogSinkItem *theSinkItem )
 
 	LogMemoryFree( theSinkItem );
 }
+
 
 int DomainLoggerAddSink( DomainLogSinkInterface *theSink )
 {
@@ -783,3 +855,4 @@ int DomainLoggerAddSink( DomainLogSinkInterface *theSink )
 
 	return 0;
 }
+
