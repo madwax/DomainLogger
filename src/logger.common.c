@@ -917,7 +917,12 @@ ThreadId LogThreadCurrentThreadId()
 
 #elif( DL_PLATFORM_IS_DARWIN == 1 )
 
-	r = pthread_mach_thread_np( pthread_self() );
+	//r = pthread_mach_thread_np( pthread_self() );
+	uint64_t tid;
+	
+	pthread_threadid_np( NULL, &tid );
+	
+	r = ( ThreadId )tid;
 
 #elif( DL_PLATFORM_IS_LINUX == 1 )
 

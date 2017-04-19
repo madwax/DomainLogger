@@ -166,6 +166,9 @@ static void DomainLoggerConsoleSinkColour( DomainLogSinkConsoleInterface *pTheSi
 
 static void DomainLoggerConsoleSinkDebugger( DomainLogSinkConsoleInterface *pTheSink, LogMessage *pMsg )
 {
+#if( DL_PLATFORM_IS_DARWIN == 1 )
+  DomainLoggerConsoleNSLog( "%s[%s][%d] \"%s\"\n", DomainLoggerConsoleLoggingLevels[ pMsg->level ], pMsg->lpDomain, pMsg->threadId, pMsg->msg );
+#endif
 }
 
 #endif

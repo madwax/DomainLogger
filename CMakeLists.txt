@@ -102,7 +102,15 @@ else()
 		list( APPEND TARGET_DEFINES "DL_PLATFORM_IS_BSD=1" )
 		list( APPEND TARGET_DEFINES "DL_PLATFORM_IS_DARWIN=1" )
 
-		list( APPEND  TARGET_SOURCES ${TARGET_SOURCE_DIR}/logger.sink.file.mm )
+		list( APPEND  TARGET_SOURCES 
+			${TARGET_SOURCE_DIR}/logger.sink.console.m 
+			${TARGET_SOURCE_DIR}/logger.sink.file.m 
+		)
+		
+		find_library( foundation Foundation REQUIRED )
+		find_library( coreFoundation CoreFoundation REQUIRED )
+		
+		list( APPEND TARGET_LINK ${foundation} ${coreFoundation} )
 
 		if( ${DomainLoggerSubPlatform} MATCHES "OSX" )
 			

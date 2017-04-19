@@ -30,5 +30,11 @@ void DomainLoggerConsoleSinkEnable( DomainLogSinkInterface *pTheSink, int consol
 /* Use to destroy the console */
 void DomainLoggerConsoleSinkDestroy( DomainLogSinkInterface *pTheSink );
 
+#if ( DL_PLATFORM_IS_DARWIN == 1 )
+
+extern void DomainLoggerConsoleNSLog( const char *message, ... ) __attribute__( ( format( printf, 1, 2 ) ) );
+
+#endif
+
 
 #endif /*  __DOMAIN_LOGGER_SINK_CONSOLE_H__ */ 
