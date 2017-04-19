@@ -57,10 +57,6 @@ DomainLogSinkInterface* DomainLoggerConsoleSinkCreate( void )
 
 	r->renderCb = NULL;
 
-#if( DL_PLATFORM_IS_WIN32 == 1 )
-	//r->hConsole = GetStdHandle( STD_OUTPUT_HANDLE );
-#endif
-
 	return &r->base;
 }
 
@@ -182,17 +178,6 @@ void DomainLoggerConsoleSinkEnable( DomainLogSinkInterface *pTheSink, int consol
 		return;
 	}
 
-	// If we have a handle already open we need to close it.
-#if( DL_PLATFORM_IS_WIN32 == 1 )
-#if 0
-		if( pX->hConsole != NULL )
-		{
-		//	CloseHandle( pX->hConsole );
-			pX->hConsole = NULL;
-		}
-#endif 
-#endif
-
 	pX->useColourOutput = consoleOutputFlags;
 
 	if( consoleOutputFlags == DomainLoggerConsoleOutputDisabled )
@@ -206,37 +191,11 @@ void DomainLoggerConsoleSinkEnable( DomainLogSinkInterface *pTheSink, int consol
 
 		if( consoleOutputFlags == DomainLoggerConsoleOutputMono )
 		{
-#if( DL_PLATFORM_IS_WIN32 == 1 )
-	
-	#if 0
-			pX->hConsole = GetStdHandle( STD_OUTPUT_HANDLE );
-			if( pX->hConsole == NULL )
-			{
-				// Windows apps and services don't always get stdout/in
-				pTheSink->enabled = 0;
-				pX->useColourOutput = DomainLoggerConsoleOutputDisabled;
-				return;
-			}
-	#endif
-
-#endif			
 			pX->renderCb = &DomainLoggerConsoleSinkMono;
 		}
 		else if( consoleOutputFlags == DomainLoggerConsoleOutputColoured )
 		{
-#if( DL_PLATFORM_IS_WIN32 == 1 )
-#if 0
-			pX->hConsole = GetStdHandle( STD_OUTPUT_HANDLE );
-			if( pX->hConsole == NULL )
-			{
-				// Windows apps and services don't always get stdout/in
-				pTheSink->enabled = 0;
-				pX->useColourOutput = DomainLoggerConsoleOutputDisabled;
-				return;
-			}
-			#endif
-
-#endif			
+		
 			pX->renderCb = &DomainLoggerConsoleSinkColour;
 		}
 		else if( consoleOutputFlags == DomainLoggerConsoleOutputDebugger )
