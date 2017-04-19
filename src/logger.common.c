@@ -400,53 +400,22 @@ int LogSpinLockTryCapture( LogSpinLock *lock )
 
 void LogSpinLockCapture( LogSpinLock *lock )
 {
-#if( DL_PLATFORM_IS_WIN32 == 1 )
-	
 	while( 1 )
 	{
-		if( InterlockedCompareExchange( lock, LOGSPINBUSY, LOGSPINFREE ) == LOGSPINFREE )
+		if( LogAtomicCompareExchange( lock, LOGSPINFREE, LOGSPINBUSY ) )
 		{
 			LogMemoryFullBarrier();
 			return;
 		}		
 		LogThreadYeild();
 	}
-
-#elif ( DL_PLATFORM_IS_UNIX == 1 )
-	while( 1 )
-	{
-		uint32_t i;
-		for( i=0; i<10000; ++i )
-		{
-			if( __sync_bool_compare_and_swap( lock, LOGSPINFREE, LOGSPINBUSY ) )
-			{
-				LogMemoryFullBarrier();
-				return;
-			}
-		}
-		LogThreadYeild();
-	}
-#endif
 }
 
 void LogSpinLockRelease( LogSpinLock *lock )
 {
+	LogAtomicSetInt32( lock, LOGSPINFREE );
+
 	LogMemoryFullBarrier();
-
-#if( DL_PLATFORM_IS_WIN32 == 1 )
-
-	InterlockedCompareExchange( lock, LOGSPINFREE, LOGSPINBUSY );
-
-#elif( DL_PLATFORM_IS_UNIX == 1 )
-
-	while( __sync_bool_compare_and_swap( lock, LOGSPINBUSY, LOGSPINFREE ) == LOGSPINFREE )
-	{
-		LogThreadYeild();
-	}
-
-#endif
-	LogMemoryFullBarrier();
- 
 }
 
 void LogSpinLockDestroy( LogSpinLock *lock )

@@ -96,12 +96,13 @@
 	extern int LogConvertCharToWChar( wchar_t *to, size_t toBufferSize, const char *from );
 	extern int LogConvertWCharToChar( char *to, size_t toBufferSize, const wchar_t *from );
 
-	#define LogAtomicExchangePointer InterlockedExchangePointer
-	#define LogAtomicCompareExchangePointer( _target, _with, _compairedTo ) InterlockedCompareExchangePointer( _target, _with, _compairedTo )
-	#define LogAtomicCompInt32( _target, _with ) ( InterlockedAdd( _target, 0 ) == _with )
-	#define LogAtomicIncInt32 InterlockedIncrement 
-	#define LogAtomicDecInt32 InterlockedDecrement
-	#define LogAtomicSetInt32 InterlockedExchange
+	#define LogAtomicExchangePointer _InterlockedExchangePointer
+	#define LogAtomicCompareExchangePointer( _target, _with, _compairedTo ) _InterlockedCompareExchangePointer( _target, _with, _compairedTo )
+	#define LogAtomicCompInt32( _target, _with ) ( _InterlockedAdd( _target, 0 ) == _with )
+	#define LogAtomicIncInt32 _InterlockedIncrement 
+	#define LogAtomicDecInt32 _InterlockedDecrement
+	#define LogAtomicSetInt32 _InterlockedExchange
+	#define LogAtomicCompareExchange( target, testValue, setTo ) ( _InterlockedCompareExchange( target, setTo, testValue ) == testValue )
 
 	#define LogThreadYeild SwitchToThread
 	#define LogThreadSleepSeconds( _secs ) Sleep( _secs * 1000 )
@@ -143,6 +144,8 @@
 
 	#define LogAtomicExchangePointer( _target, _with ) __Log_GCC_SwapPointer( _target, _with )
 	#define LogAtomicCompareExchangePointer( _target, _with, _compairedTo )	 __sync_val_compare_and_swap( _target, _compairedTo, _with )
+
+	#define LogAtomicCompareExchange( _target, _testValue, _setTo ) __sync_bool_compare_and_swap( _target, _testValue, _setTo )
 
 	#define LogThreadYeild sched_yield
 	#define LogThreadSleepSeconds sleep
