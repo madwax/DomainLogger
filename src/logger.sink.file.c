@@ -136,9 +136,7 @@ static int DomainLogSinkFileInterfaceLogWrite( DomainLogSinkFileInterface *pTheF
 	ssize_t bytesWritten;
 	char *d;
 
-	bytesWritten = 0;
 	d = data;
-
 	while( numberOfBytes ) 
 	{
 		if( ( bytesWritten = write( pTheFilkeSink->hCurrentLogFile, ( const void* )d, numberOfBytes ) ) == -1 )
@@ -368,14 +366,10 @@ int DomainLoggerFileSinkPathSet( DomainLogSinkInterface *pTheSink )
 
 void DomainLoggerFileSinkEnable( DomainLogSinkInterface *pTheSink, int toEnable )
 {
-	DomainLogSinkFileInterface *pTheFileSink;
-
 	if( pTheSink->enabled == toEnable )
 	{
 		return;
 	}
-
-	pTheFileSink = ( DomainLogSinkFileInterface* )pTheSink->data;
 
 	pTheSink->enabled = toEnable;
 }

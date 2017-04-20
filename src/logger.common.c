@@ -1018,8 +1018,8 @@ int LogThreadEventWait( LogThreadEvent *pEvent, int *isTimeout )
 {
 	int r;
 
-	r = 1;
-
+	r = 1;	
+	
 #if( DL_PLATFORM_IS_WIN32 == 1 )
 	DWORD action;
 	
@@ -1058,20 +1058,16 @@ int LogThreadEventWait( LogThreadEvent *pEvent, int *isTimeout )
 
 #if( DL_PLATFORM_IS_UNIX == 1 )
 
-	if( pEvent->created == 0 )
+	if( pEvent->created == 1 )
 	{
-		return 1;
+		pthread_mutex_lock( &pEvent->hMutex );
+		pthread_cond_wait( &pEvent->hCondition, &pEvent->hMutex );
+		pthread_mutex_unlock( &pEvent->hMutex );
+		r = 0;
 	}
-
-	pthread_mutex_lock( &pEvent->hMutex );
-
-	pthread_cond_wait( &pEvent->hCondition, &pEvent->hMutex );
-
-	pthread_mutex_unlock( &pEvent->hMutex );
-
 #endif
 
-	return 0;
+	return r;
 }
 
 void LogThreadEventDestroy( LogThreadEvent *pEvent )

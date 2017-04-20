@@ -494,11 +494,10 @@ void DomainLoggerSetDefaultLevel( DomainLoggingLevels newDefaultLevel )
 void DomainLoggerSetLevelToDomain( const char *domain, DomainLoggingLevels loggingLevel )
 {
 	DomainLoggerClientDomainInfo incoming, *pInfo, *pEnd;
-	uint32_t sz, found, foundPre;
+	uint32_t sz, foundPre;
 
 	DomainLoggerClientCheck();
 
-	found = 0;
 	foundPre = 0;
 
 	incoming.domain = ( char* )domain;
@@ -514,7 +513,6 @@ void DomainLoggerSetLevelToDomain( const char *domain, DomainLoggingLevels loggi
 		{
 			if( DomainLoggerClientPattenMatchDomainToPreDomain( &incoming, pInfo ) )
 			{
-				found = 1;
 				// we have a hit
 				pInfo->level = loggingLevel;
 			}
@@ -647,8 +645,6 @@ static int DomainLoggerClientCreateDomain( const char *whichDomain, DomainLoggin
 
 int DomainLoggerTest( const char *whichDomain, DomainLoggingLevels toTestIfUsable )
 {
-	int ret;
-
 	// We reuse the free queue protection lock as it's private and there is no way we can interlock
 	LogSpinLockCapture( &theLoggerClient.theFreeQueueProtection );
 
@@ -670,24 +666,9 @@ int DomainLoggerTest( const char *whichDomain, DomainLoggingLevels toTestIfUsabl
 		}
 	}
 
-	ret = -1;
+	LogSpinLockRelease( &theLoggerClient.theFreeQueueProtection );
 
-
-	// we need to add the new domain.
-	if( theLoggerClient.domainsNumber == DOMAINLOGGER_DOMAINS_MAXNUMBER )
-	{
-		reportFatal( "YOU HAVE MAXED OUT NUMBER OF DOMAINS ALLOWED" );
-	}	
-	else
-	{
-		DomainLoggerClientDomainInfo *pNextNewDomain;
-
-		pNextNewDomain = theLoggerClient.domains + theLoggerClient.domainsNumber;
-
-		LogSpinLockRelease( &theLoggerClient.theFreeQueueProtection );
-	}
-
-	return ret;
+	return -1;
 }
 
 void DomainLoggerPost( const char *whichDomain, DomainLoggingLevels underLevel, const char *filename, int lineNumber, const char *functionName, const char *msg, ... )
