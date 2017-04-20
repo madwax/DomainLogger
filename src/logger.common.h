@@ -153,6 +153,22 @@
 
   #define LogMemoryFullBarrier OSMemoryBarrier
 
+#elif( DL_PLATFORM_IS_BSD == 1 )
+
+	/// All the BSD's from that I can tell use the same atomic functions so...
+	#include <sys/types.h>
+  #include <machine/atomic.h>
+
+  typedef volatile unsigned int int32_atomic;
+
+  #define LogAtomicIncInt32( _t ) atomic_add_int( _t, 1 )
+  #define LogAtomicDecInt32( _t ) atomic_subtract_int( _t, 1 )
+  #define LogAtomicSetInt32( _t, _v ) atomic_set_int( _t , _v )
+  #define LogAtomicCompInt32( _t, _with ) ( atomic_load_int( _t ) == _with )
+	#define LogAtomicCompareExchange( _t, _compaireTo, _setTo ) atomic_cmpset_int( _t, _compaireTo, _setTo )
+
+  #define LogMemoryFullBarrier __sync_synchronize
+
 #else
 
   typedef volatile long int32_atomic;
