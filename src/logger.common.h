@@ -165,7 +165,6 @@
   #define LogAtomicIncInt32( _t ) OSAtomicIncrement32Barrier( _t )
   #define LogAtomicDecInt32( _t ) OSAtomicDecrement32Barrier( _t )
   #define LogAtomicSetInt32( _t, _v ) OSAtomicCompareAndSwap32Barrier( ( volatile int32_t* )*_t, _v, ( volatile int32_t* )_t )
-
   #define LogAtomicCompInt32( _target, _with ) ( __sync_fetch_and_add( _target, 0 ) == _with )
 
   #define LogMemoryFullBarrier OSMemoryBarrier
@@ -175,7 +174,6 @@
   #define LogAtomicIncInt32( _t ) __sync_add_and_fetch( _t, 1 )
   #define LogAtomicDecInt32( _t ) __sync_sub_and_fetch( _t, 1 )
   #define LogAtomicSetInt32( _t, _v ) __sync_lock_test_and_set( _t, _v )
-
   #define LogAtomicCompInt32( _target, _with ) ( __sync_fetch_and_add( _target, 0 ) == _with )
 
   #define LogMemoryFullBarrier __sync_synchronize

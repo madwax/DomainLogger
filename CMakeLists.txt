@@ -190,10 +190,10 @@ set( TEST_SOURCES ${TESTS_INCLUDE_DIR}/tests.h
 	${TESTS_SOURCE_DIR}/tests.c
 )
 
-add_executable( Test_DomainLogger ${TEST_SOURCES} )
-set_target_properties( Test_DomainLogger PROPERTIES ARCHIVE_OUTPUT_NAME "Test_DomainLogger" )
-target_include_directories( Test_DomainLogger PRIVATE ${TARGET_INCLUDE_DIR} ${TARGET_SOURCE_DIR} ${TESTS_INCLUDE_DIR} ${TESTS_SOURCE_DIR} )
-target_link_libraries( Test_DomainLogger PRIVATE ${TESTS_LINLK} )
+add_executable( DomainLogger.UnitTests ${TEST_SOURCES} )
+set_target_properties( DomainLogger.UnitTests PROPERTIES ARCHIVE_OUTPUT_NAME "Test_DomainLogger" )
+target_include_directories( DomainLogger.UnitTests PRIVATE ${TARGET_INCLUDE_DIR} ${TARGET_SOURCE_DIR} ${TESTS_INCLUDE_DIR} ${TESTS_SOURCE_DIR} )
+target_link_libraries( DomainLogger.UnitTests PRIVATE ${TESTS_LINLK} )
 
 endif( ${DomainLoggerEnableTest} )
 
@@ -206,9 +206,9 @@ set( DEMO_SOURCES ${DEMO_INCLUDE_DIR}/demo.h
 	${DEMO_SOURCE_DIR}/demo.c
 )
 
-add_executable( Demo_DomainLogger ${DEMO_SOURCES} )
-set_target_properties( Demo_DomainLogger PROPERTIES ARCHIVE_OUTPUT_NAME "Demo_DomainLogger" )
-target_include_directories( Demo_DomainLogger PRIVATE ${DEMO_INCLUDE_DIR} ${DEMO_SOURCE_DIR} )
-target_link_libraries( Demo_DomainLogger PRIVATE ${TESTS_LINLK} )
+add_executable( DomainLogger.Demo ${DEMO_SOURCES} )
+set_target_properties( DomainLogger.Demo PROPERTIES ARCHIVE_OUTPUT_NAME "Demo_DomainLogger" )
+target_include_directories( DomainLogger.Demo PRIVATE ${DEMO_INCLUDE_DIR} ${DEMO_SOURCE_DIR} )
+target_link_libraries( DomainLogger.Demo PRIVATE ${TESTS_LINLK} )
 
 endif( ${DomainLoggerEnableDemo} )

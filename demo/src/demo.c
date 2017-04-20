@@ -1,16 +1,17 @@
 #include "demo.h"
 
+
 #if defined( _WIN32 )
 	#define MySecondSleep( _x ) Sleep( _x * 1000 )
 #else
 	#define MySecondSleep( _x ) sleep( _x )
 #endif
 
+
 // The domains we are going to use
 static const char *domainOne = "demo.domain.1";
 static const char *domainTwo = "demo.domain.2";
 static const char *otherDomain = "other";
-
 static const char *theApplicationName = "Demo.DomainLogger.1";
 
 
@@ -28,11 +29,11 @@ int main( int argc, char **argv )
 	/* Start the logger going */
 	for( int i=1; i<argc; i++ )
 	{
-		if( strcasecmp( argv[ i ], "--colour" ) == 0 )
+		if( strcmp( argv[ i ], "--colour" ) == 0 )
 		{
 			mode = 1;
 		}
-		else if( strcasecmp( argv[ i ], "--debug" ) == 0 )
+		else if( strcmp( argv[ i ], "--debug" ) == 0 )
 		{
 			mode = 2;
 		}
