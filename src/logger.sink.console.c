@@ -140,7 +140,7 @@ static void DomainLoggerConsoleSinkColour( DomainLogSinkConsoleInterface *pTheSi
 
 static void DomainLoggerConsoleSinkDebugger( DomainLogSinkConsoleInterface *pTheSink, LogMessage *pMsg )
 {
-	snprintf( pTheSink->outputBuffer, DOMAINLOGGER_SINK_CONSOLE_INTERFACE_OUTPUT_BUFFER_SIZE - 1, "%s[%s][%d] \"", DomainLoggerConsoleLoggingLevels[ pMsg->level ], pMsg->lpDomain, pMsg->threadId );
+	snprintf( pTheSink->outputBuffer, DOMAINLOGGER_SINK_CONSOLE_INTERFACE_OUTPUT_BUFFER_SIZE - 1, "%s[%s][%d] \"%s\"\n", DomainLoggerConsoleLoggingLevels[ pMsg->level ], pMsg->lpDomain, pMsg->threadId, pMsg->msg );
 	OutputDebugStringA( pTheSink->outputBuffer );
 }
 
