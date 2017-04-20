@@ -96,8 +96,6 @@
 	extern int LogConvertCharToWChar( wchar_t *to, size_t toBufferSize, const char *from );
 	extern int LogConvertWCharToChar( char *to, size_t toBufferSize, const wchar_t *from );
 
-	#define LogAtomicExchangePointer _InterlockedExchangePointer
-	#define LogAtomicCompareExchangePointer( _target, _with, _compairedTo ) _InterlockedCompareExchangePointer( _target, _with, _compairedTo )
 	#define LogAtomicCompInt32( _target, _with ) ( _InterlockedAdd( _target, 0 ) == _with )
 	#define LogAtomicIncInt32 _InterlockedIncrement 
 	#define LogAtomicDecInt32 _InterlockedDecrement
@@ -131,53 +129,49 @@
 
 	// TODO FreeBSD see atomic.h atomic_cmpset_char
 
-	#if( DL_PLATFORM_IS_DARWIN == 1 )
-		#include <mach/mach.h>
-		#include <mach/mach_time.h>
-		#include <mach/clock.h>	
-		#include <CoreServices/CoreServices.h>
-		#include <libkern/OSAtomic.h>
-
-	#endif
-
   extern void* __Log_GCC_SwapPointer( void* volatile* pTarget, void *pWith );
-
-	#define LogAtomicExchangePointer( _target, _with ) __Log_GCC_SwapPointer( _target, _with )
-	#define LogAtomicCompareExchangePointer( _target, _with, _compairedTo )	 __sync_val_compare_and_swap( _target, _compairedTo, _with )
-
-	#define LogAtomicCompareExchange( _target, _testValue, _setTo ) __sync_bool_compare_and_swap( _target, _testValue, _setTo )
 
 	#define LogThreadYeild sched_yield
 	#define LogThreadSleepSeconds sleep
 
 
+#if( DL_PLATFORM_IS_DARWIN == 1 )
+
+	#include <mach/mach.h>
+	#include <mach/mach_time.h>
+	#include <mach/clock.h>	
+	#include <CoreServices/CoreServices.h>
+	#include <libkern/OSAtomic.h>
+
+  typedef volatile int32_t int32_atomic;
+
+  #define LogAtomicIncInt32( _t ) OSAtomicIncrement32Barrier( _t )
+  #define LogAtomicDecInt32( _t ) OSAtomicDecrement32Barrier( _t )
+  #define LogAtomicSetInt32( _t, _v ) OSAtomicCompareAndSwap32Barrier( *( ( int32_t* )_t ), _v, _t )
+  #define LogAtomicCompInt32( _t, _with ) ( OSAtomicAdd32Barrier( 0, ( int32_t* )_t ) == _with )
+	#define LogAtomicCompareExchange( _t, _compaireTo, _setTo ) OSAtomicCompareAndSwap32Barrier( _compaireTo, _setTo, _t )
+
+  #define LogMemoryFullBarrier OSMemoryBarrier
+
+#else
+
   typedef volatile long int32_atomic;
+
+  #define LogAtomicIncInt32( _t ) __sync_add_and_fetch( _t, 1 )
+  #define LogAtomicDecInt32( _t ) __sync_sub_and_fetch( _t, 1 )
+  #define LogAtomicSetInt32( _t, _v ) __sync_lock_test_and_set( _t, _v )
+  #define LogAtomicCompInt32( _target, _with ) ( __sync_fetch_and_add( _target, 0 ) == _with )
+	#define LogAtomicCompareExchange( _target, _testValue, _setTo ) __sync_bool_compare_and_swap( _target, _testValue, _setTo )
+	
+  #define LogMemoryFullBarrier __sync_synchronize
+
+#endif
 
 #if( DL_PLATFORM_IS_SPINLOCKS_MUTEXS == 1 )
   typedef pthread_mutex_t LogSpinLock;
 #else
   /** The spin lock type */
   typedef int32_atomic LogSpinLock;
-#endif
-
-#if( DL_PLATFORM_IS_DARWIN == 1 )
-
-  #define LogAtomicIncInt32( _t ) OSAtomicIncrement32Barrier( _t )
-  #define LogAtomicDecInt32( _t ) OSAtomicDecrement32Barrier( _t )
-  #define LogAtomicSetInt32( _t, _v ) OSAtomicCompareAndSwap32Barrier( ( volatile int32_t* )*_t, _v, ( volatile int32_t* )_t )
-  #define LogAtomicCompInt32( _target, _with ) ( __sync_fetch_and_add( _target, 0 ) == _with )
-
-  #define LogMemoryFullBarrier OSMemoryBarrier
-
-#else
-
-  #define LogAtomicIncInt32( _t ) __sync_add_and_fetch( _t, 1 )
-  #define LogAtomicDecInt32( _t ) __sync_sub_and_fetch( _t, 1 )
-  #define LogAtomicSetInt32( _t, _v ) __sync_lock_test_and_set( _t, _v )
-  #define LogAtomicCompInt32( _target, _with ) ( __sync_fetch_and_add( _target, 0 ) == _with )
-
-  #define LogMemoryFullBarrier __sync_synchronize
-
 #endif
 
   #define MAX_PATH 260
