@@ -1,4 +1,3 @@
-# This handles some of the platform stuff when using SDL2 and OpenGL together
 cmake_minimum_required(VERSION 3.1.0)
 
 project( DomainLogger )
