@@ -33,6 +33,8 @@ if( MSVC )
 	)
 endif()
 
+set(Base_Platform_UNIX FALSE)
+
 if( DEFINED DomainLoggerPlatform )
 
 	message( "User passed ${DomainLoggerPlatform}" )
@@ -95,6 +97,8 @@ if( ${DomainLoggerPlatform} MATCHES "Win32" )
 else()
 
 	list( APPEND TARGET_DEFINES "DL_PLATFORM_IS_UNIX=1" )
+
+	set( Base_Platform_UNIX TRUE )
 
 	if( ${DomainLoggerPlatform} MATCHES "Darwin" )
 
