@@ -41,8 +41,6 @@ if( DEFINED DomainLoggerPlatform )
 
 else()
 
-	message( "Working out what platform we have" )
-
 	set( DomainLoggerSubPlatform "" )
 
 	# need to work out what we have.
