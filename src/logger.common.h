@@ -96,11 +96,11 @@
 	extern int LogConvertCharToWChar( wchar_t *to, size_t toBufferSize, const char *from );
 	extern int LogConvertWCharToChar( char *to, size_t toBufferSize, const wchar_t *from );
 
-	#define LogAtomicCompInt32( _target, _with ) ( _InterlockedAdd( _target, 0 ) == _with )
-	#define LogAtomicIncInt32 _InterlockedIncrement 
-	#define LogAtomicDecInt32 _InterlockedDecrement
-	#define LogAtomicSetInt32 _InterlockedExchange
-	#define LogAtomicCompareExchange( target, testValue, setTo ) ( _InterlockedCompareExchange( target, setTo, testValue ) == testValue )
+	#define LogAtomicCompInt32( _target, _with ) ( InterlockedAdd( _target, 0 ) == _with )
+	#define LogAtomicIncInt32 InterlockedIncrement 
+	#define LogAtomicDecInt32 InterlockedDecrement
+	#define LogAtomicSetInt32 InterlockedExchange
+	#define LogAtomicCompareExchange( target, testValue, setTo ) ( InterlockedCompareExchange( target, setTo, testValue ) == testValue )
 
 	#define LogThreadYeild SwitchToThread
 	#define LogThreadSleepSeconds( _secs ) Sleep( _secs * 1000 )
